@@ -4,3 +4,13 @@
 
 # LangGraph
 .langgraph_api/
+
+# Entorno virtual de Python
+.venv/
+
+# Variables de entorno y credenciales
+.env
+
+# Caché de Python
+__pycache__/
+*.pyc
