@@ -12,18 +12,18 @@ load_dotenv()
 async def main():
     html = render_ticket_created(
         nombre_cliente="José",
-        ticket_id=153,
+        ticket_id=322,
         tipo_solicitud="Soporte técnico",
         estado="Pendiente",
     )
 
     await send_email(
         destinatario=os.getenv("TEST_EMAIL_TO"),
-        asunto="Ticket #153 registrado",
+        asunto="Ticket #322 registrado",
         html=html,
     )
 
-    print("Correo enviado correctamente de forma asíncrona.")
+    print("Correo enviado correctamente.")
 
 
 asyncio.run(main())
