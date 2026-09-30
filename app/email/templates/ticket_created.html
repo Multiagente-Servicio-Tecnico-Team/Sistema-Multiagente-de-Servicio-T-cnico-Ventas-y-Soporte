@@ -2,33 +2,201 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Ticket registrado</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Ticket registrado - TechFix.AI</title>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f4f7fb;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #1f2937;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border: 1px solid #dfe5ee;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* Encabezado */
+        .header {
+            padding: 28px 35px;
+            background-color: #1761f5;
+            color: #ffffff;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 23px;
+        }
+
+        .header p {
+            margin: 8px 0 0;
+            font-size: 14px;
+        }
+
+        /* Contenido */
+        .content {
+            padding: 35px;
+        }
+
+        .content h2 {
+            margin: 0 0 22px;
+            font-size: 22px;
+            color: #1d2433;
+        }
+
+        .content p {
+            margin: 0 0 18px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* Información del ticket */
+        .ticket {
+            width: 100%;
+            margin: 28px 0;
+            border: 1px solid #dfe5ee;
+            border-radius: 9px;
+            border-spacing: 0;
+            overflow: hidden;
+            background-color: #f8fafc;
+        }
+
+        .ticket td {
+            padding: 17px;
+            font-size: 13px;
+        }
+
+        .ticket tr:not(:last-child) td {
+            border-bottom: 1px solid #dfe5ee;
+        }
+
+        .ticket-label {
+            font-weight: bold;
+        }
+
+        .ticket-value {
+            text-align: right;
+        }
+
+        .ticket-id {
+            color: #0759d9;
+            font-weight: bold;
+        }
+
+        /* Estado */
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            background-color: #e1edff;
+            color: #0759d9;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        /* Pie */
+        .footer {
+            padding: 22px;
+            background-color: #f8fafc;
+            border-top: 1px solid #dfe5ee;
+            text-align: center;
+            color: #7c8799;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+
+        .footer strong {
+            color: #5d6879;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>Solicitud registrada</h1>
 
-    <p>Hola {{ nombre_cliente }},</p>
+    <div class="container">
 
-    <p>
-        Tu solicitud ha sido registrada correctamente
-        con el ticket <strong>#{{ ticket_id }}</strong>.
-    </p>
+        <!-- Encabezado -->
+        <div class="header">
+            <h1>TechFix.AI</h1>
+            <p>Servicio Técnico Inteligente</p>
+        </div>
 
-    <p>
-        <strong>Tipo de solicitud:</strong> {{ tipo_solicitud }}
-    </p>
+        <!-- Contenido principal -->
+        <div class="content">
 
-    <p>
-        <strong>Estado:</strong> {{ estado }}
-    </p>
+            <h2>Solicitud registrada correctamente</h2>
 
-    <p>
-        Nuestro equipo atenderá tu solicitud lo antes posible.
-    </p>
+            <p>
+                Hola <strong>{{ nombre_cliente }}</strong>,
+            </p>
 
-    <p>
-        Sistema Multiagente de Servicio Técnico, Ventas y Soporte
-    </p>
+            <p>
+                Hemos recibido tu solicitud de servicio.
+                Tu ticket fue registrado correctamente y nuestro equipo
+                podrá comenzar a revisarlo.
+            </p>
+
+            <!-- Datos del ticket -->
+            <table class="ticket">
+
+                <tr>
+                    <td class="ticket-label">
+                        Ticket
+                    </td>
+
+                    <td class="ticket-value">
+                        <span class="ticket-id">
+                            #TCK-{{ ticket_id }}
+                        </span>
+                    </td>
+                </tr>
+
+                <tr>
+                    <td>
+                        Tipo de solicitud
+                    </td>
+
+                    <td class="ticket-value">
+                        {{ tipo_solicitud }}
+                    </td>
+                </tr>
+
+                <tr>
+                    <td>
+                        Estado
+                    </td>
+
+                    <td class="ticket-value">
+                        <span class="status">
+                            {{ estado }}
+                        </span>
+                    </td>
+                </tr>
+
+            </table>
+
+            <p>
+                Te mantendremos informado sobre los avances de tu solicitud.
+            </p>
+
+        </div>
+
+        <!-- Pie del correo -->
+        <div class="footer">
+            <strong>TechFix.AI</strong><br>
+            Servicio Técnico · Ventas · Soporte<br><br>
+            Este es un correo automático. No es necesario responder.
+        </div>
+
+    </div>
+
 </body>
 </html>
