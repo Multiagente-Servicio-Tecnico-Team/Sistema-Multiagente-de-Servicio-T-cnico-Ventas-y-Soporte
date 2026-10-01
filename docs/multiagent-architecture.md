@@ -57,6 +57,12 @@ LangGraph. Para la primera versión se utiliza memoria de proceso ligada a un
 
 ## Persistencia basada en el esquema de `info.md`
 
+La base PostgreSQL de desarrollo ya fue migrada en el sitio desde sus nombres
+españoles al esquema inglés de `info.md`; el script auditable es
+[`../sql/migrate_spanish_schema_to_english.sql`](../sql/migrate_spanish_schema_to_english.sql).
+La conversión renombra tablas, columnas, tipos y valores ENUM, y secuencias de
+identidad, sin copiar ni eliminar filas. No debe repetirse en una base ya migrada.
+
 1. Buscar `users` por email, `active = TRUE` y `role = 'CUSTOMER'`. Si no existe,
    solicitar que el cliente use un email registrado; no crear ni modificar usuarios.
 2. Consultar repuestos activos por `code` o coincidencia acotada de nombre, usando

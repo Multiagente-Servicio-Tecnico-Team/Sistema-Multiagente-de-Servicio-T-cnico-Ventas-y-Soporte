@@ -16,6 +16,15 @@ clientes, inventario, tickets y cotizaciones.
 - Un cliente activo con rol `CUSTOMER` y un repuesto activo en `spare_parts` para
   probar el flujo de cotización.
 
+### Esquema PostgreSQL
+
+La base de desarrollo ya tenía tablas y ENUMs en español. Su estructura se
+renombró en el mismo sitio al esquema en inglés de `info.md`, preservando filas,
+índices, secuencias de identidad y relaciones. La migración de una sola ejecución está en
+[`sql/migrate_spanish_schema_to_english.sql`](sql/migrate_spanish_schema_to_english.sql).
+No la ejecutes de nuevo después de migrar. Para una base vacía, primero crea el
+esquema con el SQL de `info.md`; la aplicación no aplica DDL automáticamente.
+
 ### Instalación en Windows
 
 ```powershell
