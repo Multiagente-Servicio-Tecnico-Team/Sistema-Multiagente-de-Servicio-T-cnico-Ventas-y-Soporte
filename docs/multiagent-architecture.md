@@ -14,8 +14,8 @@ El prototipo:
 - Conserva el estado conversacional solo durante la sesión del navegador; no agrega
   una tabla para almacenar conversaciones.
 - Consulta `spare_parts` para obtener existencias y precios reales.
-- Guarda el ticket y la cotización en `tickets`, `quotes` y `quote_details` dentro
-  de una única transacción.
+- Abre el ticket en `IN_DIAGNOSIS`; guarda `quotes` y `quote_details` y cambia el
+  ticket a `QUOTED` en una única transacción cuando el inventario está confirmado.
 - No permite al modelo generar SQL ni decidir precios finales.
 
 ## Patrón jerárquico en LangGraph
@@ -30,11 +30,14 @@ START
      aclaración)
        -> END, si necesita preguntar al cliente
        -> soporte técnico, si hay información suficiente para una reparación
-            -> almacén/logística (consulta parametrizada de inventario)
-                 -> ventas (calcula importes con precios de PostgreSQL)
-                      -> persistencia transaccional de ticket y cotización
-                           -> atención (redacta la respuesta)
-                                -> END
+            -> abrir ticket en estado IN_DIAGNOSIS
+                 -> almacén/logística (consulta parametrizada de inventario)
+                      -> ventas (calcula importes con precios de PostgreSQL)
+                           -> persistencia transaccional de cotización y cambio a
+                              estado QUOTED
+                                -> atención (presenta el resultado)
+                                     -> END
+                      -> END, si falta stock o hay productos ambiguos
        -> atención, para consultas informativas que no requieren cotización
             -> END
 ```
@@ -58,13 +61,17 @@ LangGraph. Para la primera versión se utiliza memoria de proceso ligada a un
    solicitar que el cliente use un email registrado; no crear ni modificar usuarios.
 2. Consultar repuestos activos por `code` o coincidencia acotada de nombre, usando
    parámetros enlazados. Nunca ejecutar SQL generado por el modelo.
-3. Tras una cotización válida, insertar `tickets` con `request_type = 'REPAIR'`,
-   `status = 'QUOTED'` y el diagnóstico provisional.
-4. Insertar `quotes` con los importes calculados en servidor y `status = 'PENDING'`.
-5. Insertar en `quote_details` solo repuestos disponibles, junto a cantidad,
-   precio leído y subtotal calculado.
-6. Ejecutar los inserts en una sola transacción. Un error debe revertir todas las
-   escrituras y mostrarse como error, no como una cotización guardada.
+3. Tras el diagnóstico, insertar `tickets` con el `request_type` detectado,
+   `status = 'IN_DIAGNOSIS'` y el diagnóstico provisional.
+4. Si algún repuesto no existe, es ambiguo o no tiene stock suficiente, conservar
+   el ticket en análisis, explicar el motivo y no crear una cotización parcial.
+5. Si el inventario está confirmado, calcular mano de obra y repuestos en servidor;
+   insertar `quotes` con `status = 'PENDING'` y actualizar el ticket a `QUOTED`.
+6. Insertar en `quote_details` solo repuestos confirmados, con precio leído y
+   subtotal calculado; guardar la cotización, detalles y cambio de estado en una
+   única transacción.
+7. Un error debe revertir la transacción de cotización y mostrarse como error, no
+   como una cotización guardada.
 
 No se crean registros de conversación ni se alteran ENUMs/tablas en este alcance.
 El `technician_id` es nullable según el esquema y queda vacío mientras no haya un
