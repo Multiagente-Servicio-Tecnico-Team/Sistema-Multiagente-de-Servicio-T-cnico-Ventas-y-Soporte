@@ -26,6 +26,8 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.groq_model, "test-model")
         self.assertTrue(settings.langsmith_tracing)
+        self.assertTrue(settings.langsmith_hide_inputs)
+        self.assertTrue(settings.langsmith_hide_outputs)
         self.assertEqual(settings.labor_hourly_rate, Decimal("75.50"))
         settings.require_chat_configuration()
 
@@ -41,6 +43,17 @@ class SettingsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "LANGSMITH_API_KEY"):
             settings.require_chat_configuration()
+
+    def test_langsmith_trace_redaction_can_be_explicitly_disabled(self):
+        settings = self.load_from_environment(
+            {
+                "LANGSMITH_HIDE_INPUTS": "false",
+                "LANGSMITH_HIDE_OUTPUTS": "false",
+            }
+        )
+
+        self.assertFalse(settings.langsmith_hide_inputs)
+        self.assertFalse(settings.langsmith_hide_outputs)
 
     def test_sensitive_settings_are_not_in_repr(self):
         settings = self.load_from_environment(

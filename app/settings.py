@@ -13,6 +13,8 @@ class Settings:
     langsmith_api_key: str | None = field(repr=False)
     langsmith_tracing: bool
     langsmith_project: str
+    langsmith_hide_inputs: bool
+    langsmith_hide_outputs: bool
     labor_hourly_rate: Decimal | None
 
     def require_chat_configuration(self) -> None:
@@ -77,5 +79,13 @@ def load_settings() -> Settings:
             "LANGSMITH_PROJECT",
             "Sistema-Multiagente-de-Servicio-Tecnico-Ventas-y-Soporte",
         ).strip(),
+        langsmith_hide_inputs=_environment_flag(
+            "LANGSMITH_HIDE_INPUTS",
+            default=True,
+        ),
+        langsmith_hide_outputs=_environment_flag(
+            "LANGSMITH_HIDE_OUTPUTS",
+            default=True,
+        ),
         labor_hourly_rate=_optional_decimal("LABOR_HOURLY_RATE"),
     )

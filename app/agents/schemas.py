@@ -22,3 +22,8 @@ class TechnicalDiagnosis(BaseModel):
     provisional_diagnosis: str = Field(min_length=1, max_length=2000)
     estimated_labor_hours: Decimal = Field(ge=0, le=100)
     required_parts: list[PartRequest] = Field(default_factory=list, max_length=10)
+
+
+class QuoteConfirmation(BaseModel):
+    decision: Literal["confirm", "decline", "unclear"]
+    clarification_question: str | None = Field(default=None, max_length=500)

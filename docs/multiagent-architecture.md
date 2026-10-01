@@ -30,14 +30,19 @@ START
      aclaración)
        -> END, si necesita preguntar al cliente
        -> soporte técnico, si hay información suficiente para una reparación
-            -> abrir ticket en estado IN_DIAGNOSIS
-                 -> almacén/logística (consulta parametrizada de inventario)
-                      -> ventas (calcula importes con precios de PostgreSQL)
-                           -> persistencia transaccional de cotización y cambio a
-                              estado QUOTED
-                                -> atención (presenta el resultado)
-                                     -> END
-                      -> END, si falta stock o hay productos ambiguos
+            -> recuperación lexical RAG (guías sintéticas locales)
+                 -> soporte técnico (diagnóstico provisional y horas)
+                      -> almacén/logística (consulta parametrizada de inventario)
+                           -> ventas (cálculo con tarifa y precios PostgreSQL)
+                                -> atención presenta propuesta indicativa
+                                     -> END, sin escrituras antes de confirmar
+            -> atención, al recibir confirmación
+                 -> almacén/logística (revalida precio y stock)
+                      -> ventas (recalcula)
+                           -> atención pide confirmar de nuevo si algo cambió
+                           -> persistencia atómica de ticket, cotización y detalles
+                                -> END
+                 -> END, si se rechaza o falta stock/producto
        -> atención, para consultas informativas que no requieren cotización
             -> END
 ```
@@ -50,6 +55,7 @@ START
 | Soporte técnico | Propone diagnóstico provisional, horas de trabajo y repuestos por nombre/código. | No inventa existencias ni precios; su salida es estructurada y validada. |
 | Almacén y logística | Busca repuestos activos en `spare_parts` y lee precio y stock. | Solo SELECT parametrizados; los artículos sin stock se informan, no se cotizan. |
 | Ventas | Calcula mano de obra, subtotales y total usando valores validados del almacén. | La tarifa de mano de obra es configuración del servidor; nunca la fija el LLM. |
+| Recuperación de conocimiento | Recupera casos sintéticos en español por coincidencia lexical. | No usa embeddings; rangos UM son demostrativos y no entran al cálculo comercial. |
 
 El grafo conserva `messages` y los datos de trabajo estructurados en el estado de
 LangGraph. Para la primera versión se utiliza memoria de proceso ligada a un
@@ -67,17 +73,19 @@ identidad, sin copiar ni eliminar filas. No debe repetirse en una base ya migrad
    solicitar que el cliente use un email registrado; no crear ni modificar usuarios.
 2. Consultar repuestos activos por `code` o coincidencia acotada de nombre, usando
    parámetros enlazados. Nunca ejecutar SQL generado por el modelo.
-3. Tras el diagnóstico, insertar `tickets` con el `request_type` detectado,
-   `status = 'IN_DIAGNOSIS'` y el diagnóstico provisional.
-4. Si algún repuesto no existe, es ambiguo o no tiene stock suficiente, conservar
-   el ticket en análisis, explicar el motivo y no crear una cotización parcial.
-5. Si el inventario está confirmado, calcular mano de obra y repuestos en servidor;
-   insertar `quotes` con `status = 'PENDING'` y actualizar el ticket a `QUOTED`.
-6. Insertar en `quote_details` solo repuestos confirmados, con precio leído y
-   subtotal calculado; guardar la cotización, detalles y cambio de estado en una
-   única transacción.
-7. Un error debe revertir la transacción de cotización y mostrarse como error, no
-   como una cotización guardada.
+3. Recuperar guías RAG simuladas pertinentes. Las guías pueden sugerir causas,
+   repuestos y horas, pero no prueban una falla ni definen precios reales.
+4. Consultar inventario activo por código/nombre usando parámetros enlazados. Si
+   no existe un resultado único o falta stock, informar y no escribir ticket ni
+   cotización.
+5. Presentar al cliente diagnóstico y cálculo indicativos, diferenciando horas
+   estimadas, precio real de inventario y material RAG simulado. No persistir aún.
+6. Solo tras una respuesta afirmativa inequívoca, revalidar stock y precio. Si
+   cambió cualquiera de esos valores, recalcular y pedir una nueva confirmación.
+7. Con datos todavía válidos, crear `tickets` en `IN_DIAGNOSIS`, `quotes` en
+   `PENDING`, `quote_details` y el estado `QUOTED` del ticket dentro de una sola
+   transacción. Un error revierte todo.
+8. Una respuesta negativa cancela la propuesta sin insertar registros.
 
 No se crean registros de conversación ni se alteran ENUMs/tablas en este alcance.
 El `technician_id` es nullable según el esquema y queda vacío mientras no haya un
@@ -110,6 +118,8 @@ usuario técnico asignado.
   para la sesión. No usar email, nombre ni mensaje en el `thread_id` de LangGraph.
 - Mostrar preguntas de aclaración y errores de configuración/DB de forma explícita.
   La UI nunca debe mostrar que se creó un ticket si la transacción falló.
+- La cotización indicativa aparece en el chat antes de persistir y el cliente debe
+  confirmar explícitamente; la respuesta incluye cifras estructuradas en la API.
 
 ## Validación por bloques
 

@@ -158,14 +158,17 @@
     <main>
       <header>
         <h1>Asistente de servicio técnico</h1>
-        <p>Describe la falla. Usa el email de un cliente ya registrado.</p>
+        <p>
+          Describe la falla y usa el email de un cliente activo registrado.
+          El email solo identifica, no autentica.
+        </p>
       </header>
       <section id="messages" aria-live="polite" aria-label="Conversación">
         <p class="message assistant">Hola. ¿Qué problema presenta tu equipo?</p>
       </section>
       <form id="chat-form">
         <label>
-          Email del cliente registrado
+          Email del cliente activo registrado
           <input id="email" name="email" type="email" maxlength="254" required>
         </label>
         <label for="message">Mensaje</label>

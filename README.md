@@ -57,14 +57,24 @@ uvicorn app.main:app --reload
 Abre <http://127.0.0.1:8000>. La interfaz solicita el email de un cliente ya
 registrado y mantiene el chat en memoria durante la sesión del servidor. Cada
 mensaje usa `POST /api/chat`; los datos de conversación no se escriben en
-PostgreSQL. Los tickets pasan a `IN_DIAGNOSIS`; solo se genera una cotización y se
-cambia el estado a `QUOTED` cuando los repuestos están confirmados.
+PostgreSQL. El chat primero muestra una evaluación y cotización indicativas: las
+guías locales de `docs/knowledge_base/simulated_cases.json` son sintéticas, se
+recuperan por coincidencia lexical y sus rangos UM no se usan como precio. Los
+totales siempre se calculan con tarifa laboral y precios/stock de PostgreSQL.
+No se guarda nada hasta que el cliente responde afirmativamente; entonces se
+revalida el inventario y se crean ticket, cotización y detalles en una transacción.
+Si cambió el stock o el precio, el chat presenta los valores actualizados y solicita
+una nueva confirmación. Un “no” cancela sin insertar datos.
 
 Para ejecutar las pruebas unitarias:
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+Las pruebas incluyen recuperación RAG, confirmación de varios turnos, revalidación
+de inventario y rollback de la persistencia transaccional. No crean tickets ni
+cotizaciones en PostgreSQL real.
 
 ### Límite de seguridad del prototipo
 

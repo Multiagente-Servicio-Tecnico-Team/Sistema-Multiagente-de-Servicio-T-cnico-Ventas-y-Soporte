@@ -5,11 +5,20 @@ from app.database.repository import ServiceRepository
 
 
 class FakeResult:
-    def __init__(self, *, row=None, rows=None, scalar=None, rowcount=1) -> None:
+    def __init__(
+        self,
+        *,
+        row=None,
+        rows=None,
+        scalar=None,
+        rowcount=1,
+        error: Exception | None = None,
+    ) -> None:
         self.row = row
         self.rows = rows or []
         self.scalar = scalar
         self.rowcount = rowcount
+        self.error = error
 
     def mappings(self):
         return self
@@ -18,6 +27,8 @@ class FakeResult:
         return self.row
 
     def scalar_one(self):
+        if self.error:
+            raise self.error
         return self.scalar
 
     def __iter__(self):
@@ -143,6 +154,74 @@ class RepositoryTests(unittest.TestCase):
             )
 
         self.assertEqual(len(session.calls), 1)
+        self.assertTrue(session.transaction.rolled_back)
+        self.assertFalse(session.transaction.committed)
+
+    def test_ticket_and_quote_are_created_in_one_transaction(self):
+        session = FakeSession(
+            [
+                FakeResult(scalar=55),
+                FakeResult(scalar=77),
+                FakeResult(rowcount=1),
+                FakeResult(),
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        ticket_id, quote_id = repository.create_ticket_with_quote(
+            ticket_code="ST-123456789ABC",
+            customer_id=9,
+            title="Laptop lenta",
+            failure_description="Tarda en iniciar.",
+            request_type="REPAIR",
+            provisional_diagnosis="Unidad lenta.",
+            labor_cost=Decimal("20.00"),
+            parts_cost=Decimal("180.00"),
+            total_amount=Decimal("200.00"),
+            observations="Guía RAG simulada.",
+            parts=[
+                {
+                    "id": 4,
+                    "quantity": 1,
+                    "unit_price": Decimal("180.00"),
+                    "subtotal": Decimal("180.00"),
+                }
+            ],
+        )
+
+        self.assertEqual((ticket_id, quote_id), (55, 77))
+        self.assertEqual(len(session.calls), 4)
+        self.assertIn("IN_DIAGNOSIS", session.calls[0][0])
+        self.assertIn("quotes", session.calls[1][0])
+        self.assertIn("QUOTED", session.calls[2][0])
+        self.assertIn("quote_details", session.calls[3][0])
+        self.assertTrue(session.transaction.committed)
+
+    def test_ticket_is_rolled_back_if_quote_insert_fails(self):
+        session = FakeSession(
+            [
+                FakeResult(scalar=55),
+                FakeResult(error=RuntimeError("simulated quote failure")),
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        with self.assertRaisesRegex(RuntimeError, "simulated quote failure"):
+            repository.create_ticket_with_quote(
+                ticket_code="ST-123456789ABC",
+                customer_id=9,
+                title="Laptop lenta",
+                failure_description="Tarda en iniciar.",
+                request_type="REPAIR",
+                provisional_diagnosis="Unidad lenta.",
+                labor_cost=Decimal("20.00"),
+                parts_cost=Decimal("0.00"),
+                total_amount=Decimal("20.00"),
+                observations="Guía RAG simulada.",
+                parts=[],
+            )
+
+        self.assertEqual(len(session.calls), 2)
         self.assertTrue(session.transaction.rolled_back)
         self.assertFalse(session.transaction.committed)
 

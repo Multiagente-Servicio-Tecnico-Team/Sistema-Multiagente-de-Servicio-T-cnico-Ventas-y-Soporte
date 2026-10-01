@@ -3,6 +3,7 @@ import hmac
 import logging
 import re
 import secrets
+from contextlib import AbstractContextManager, nullcontext
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
@@ -13,6 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from groq import APIError as GroqAPIError
 from langchain_core.exceptions import OutputParserException
+from langsmith import Client, tracing_context
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -94,6 +96,22 @@ def get_graph() -> Any:
     return build_multiagent_graph(settings=load_settings())
 
 
+def get_trace_context() -> AbstractContextManager[None]:
+    settings = load_settings()
+    if not settings.langsmith_tracing:
+        return nullcontext()
+    client = Client(
+        api_key=settings.langsmith_api_key,
+        hide_inputs=settings.langsmith_hide_inputs,
+        hide_outputs=settings.langsmith_hide_outputs,
+    )
+    return tracing_context(
+        enabled=True,
+        project_name=settings.langsmith_project,
+        client=client,
+    )
+
+
 app = FastAPI(
     title="Asistente multiagente de servicio técnico",
     version="0.1.0",
@@ -118,22 +136,18 @@ def chat(request: ChatRequest) -> ChatResponse:
 
     with session_lock:
         try:
-            result: dict[str, Any] = get_graph().invoke(
-                {
-                    "messages": [{"role": "user", "content": request.message}],
-                    "customer_email": request.email,
-                    "outcome": "pending",
-                    "ticket_id": None,
-                    "ticket_code": "",
-                    "quote_id": None,
-                    "quote": None,
-                },
-                config={
-                    "configurable": {"thread_id": str(request.session_id)},
-                    "metadata": {"session_id": str(request.session_id)},
-                    "tags": ["hierarchical-multiagent", "service-chat"],
-                },
-            )
+            with get_trace_context():
+                result: dict[str, Any] = get_graph().invoke(
+                    {
+                        "messages": [{"role": "user", "content": request.message}],
+                        "customer_email": request.email,
+                    },
+                    config={
+                        "configurable": {"thread_id": str(request.session_id)},
+                        "metadata": {"session_id": str(request.session_id)},
+                        "tags": ["hierarchical-multiagent", "service-chat"],
+                    },
+                )
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except SQLAlchemyError as exc:
@@ -163,7 +177,11 @@ def chat(request: ChatRequest) -> ChatResponse:
         )
 
     outcome = result.get("outcome", "pending")
-    quote = result.get("quote") if outcome == "quoted" else None
+    quote = (
+        result.get("quote")
+        if outcome in {"awaiting_confirmation", "quoted"}
+        else None
+    )
     quote_response = (
         QuoteResponse(
             labor_cost=f"{quote['labor_cost']:.2f}",
@@ -177,8 +195,10 @@ def chat(request: ChatRequest) -> ChatResponse:
         session_id=request.session_id,
         answer=messages[-1].content,
         outcome=outcome,
-        ticket_id=result.get("ticket_id"),
-        ticket_code=result.get("ticket_code") or None,
+        ticket_id=result.get("ticket_id") if outcome == "quoted" else None,
+        ticket_code=(
+            result.get("ticket_code") or None if outcome == "quoted" else None
+        ),
         quote_id=result.get("quote_id") if outcome == "quoted" else None,
         quote=quote_response,
     )

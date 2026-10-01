@@ -3,7 +3,12 @@ from dataclasses import replace
 from decimal import Decimal
 
 from app.agents.graph import build_multiagent_graph, calculate_quote
-from app.agents.schemas import IntakeDecision, PartRequest, TechnicalDiagnosis
+from app.agents.schemas import (
+    IntakeDecision,
+    PartRequest,
+    QuoteConfirmation,
+    TechnicalDiagnosis,
+)
 from app.settings import Settings
 
 
@@ -12,9 +17,11 @@ class FakeStructuredModel:
         self,
         intake: IntakeDecision,
         diagnosis: TechnicalDiagnosis,
+        confirmation: QuoteConfirmation,
     ) -> None:
         self.intake = intake
         self.diagnosis = diagnosis
+        self.confirmation = confirmation
 
     def with_structured_output(self, schema):
         return FakeStructuredResponse(self, schema)
@@ -31,6 +38,8 @@ class FakeStructuredResponse:
             return self.model.intake
         if self.schema is TechnicalDiagnosis:
             return self.model.diagnosis
+        if self.schema is QuoteConfirmation:
+            return self.model.confirmation
         raise AssertionError(f"Unexpected structured schema: {self.schema}")
 
 
@@ -51,6 +60,11 @@ class FakeRepository:
         self.created_ticket = values
         return 84
 
+    def create_ticket_with_quote(self, **values):
+        self.created_ticket = values
+        self.saved_quote = values
+        return 84, 91
+
     def find_spare_parts(self, search_term):
         del search_term
         return [
@@ -68,6 +82,17 @@ class FakeRepository:
         return 91
 
 
+class AdjustableRateSettings:
+    def __init__(self) -> None:
+        self.labor_hourly_rate = Decimal("80.00")
+
+    def require_chat_configuration(self) -> None:
+        return None
+
+    def require_labor_hourly_rate(self) -> Decimal:
+        return self.labor_hourly_rate
+
+
 def make_settings() -> Settings:
     return Settings(
         groq_api_key="test-key",
@@ -76,6 +101,8 @@ def make_settings() -> Settings:
         langsmith_api_key=None,
         langsmith_tracing=False,
         langsmith_project="test-project",
+        langsmith_hide_inputs=True,
+        langsmith_hide_outputs=True,
         labor_hourly_rate=Decimal("80.00"),
     )
 
@@ -83,6 +110,7 @@ def make_settings() -> Settings:
 def make_model(
     intake: IntakeDecision | None = None,
     diagnosis: TechnicalDiagnosis | None = None,
+    confirmation: QuoteConfirmation | None = None,
 ) -> FakeStructuredModel:
     return FakeStructuredModel(
         intake=intake
@@ -98,25 +126,29 @@ def make_model(
             estimated_labor_hours=Decimal("1.50"),
             required_parts=[PartRequest(search_term="Ventilador interno", quantity=2)],
         ),
+        confirmation=confirmation
+        or QuoteConfirmation(decision="confirm"),
     )
 
 
-def invoke(graph):
+def invoke(graph, message="Mi laptop se calienta y se apaga.", *, initial=True):
+    values = {
+        "messages": [{"role": "user", "content": message}],
+    }
+    if initial:
+        values.update(
+            {
+                "customer_email": "ana@example.com",
+                "outcome": "pending",
+                "awaiting_quote_confirmation": False,
+                "ticket_id": None,
+                "ticket_code": "",
+                "quote_id": None,
+                "quote": None,
+            }
+        )
     return graph.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "Mi laptop se calienta y se apaga.",
-                }
-            ],
-            "customer_email": "ana@example.com",
-            "outcome": "pending",
-            "ticket_id": None,
-            "ticket_code": "",
-            "quote_id": None,
-            "quote": None,
-        },
+        values,
         config={
             "configurable": {"thread_id": "test-session"},
             "metadata": {"session_id": "test-session"},
@@ -144,7 +176,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(quote["total_amount"], Decimal("140.50"))
         self.assertEqual(quote["parts"][0]["subtotal"], Decimal("20.50"))
 
-    def test_runs_hierarchical_flow_and_persists_quote(self):
+    def test_suggests_rag_diagnosis_without_persisting_before_confirmation(self):
         repository = FakeRepository()
         graph = build_multiagent_graph(
             settings=make_settings(),
@@ -154,15 +186,113 @@ class MultiagentGraphTests(unittest.TestCase):
 
         result = invoke(graph)
 
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertTrue(result["awaiting_quote_confirmation"])
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertEqual(
+            [document["id"] for document in result["rag_documents"]],
+            ["CASE-LAPTOP-OVERHEAT-01"],
+        )
+        self.assertIn("Total indicativo calculado: 140.50", result["messages"][-1].content)
+
+    def test_confirmation_persists_ticket_and_quote_atomically(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(),
+        )
+
+        suggestion = invoke(graph)
+        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(suggestion["outcome"], "awaiting_confirmation")
+
+        result = invoke(graph, "Sí, confirma", initial=False)
+
         self.assertEqual(result["outcome"], "quoted")
+        self.assertFalse(result["awaiting_quote_confirmation"])
         self.assertEqual(repository.created_ticket["customer_id"], 12)
         self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
-        self.assertEqual(repository.saved_quote["ticket_id"], 84)
         self.assertEqual(repository.saved_quote["total_amount"], Decimal("140.50"))
         self.assertIn("ST-", result["messages"][-1].content)
         self.assertIn("140.50", result["messages"][-1].content)
 
-    def test_stock_shortage_leaves_ticket_in_analysis_without_quote(self):
+    def test_stock_change_requires_a_new_confirmation(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(),
+        )
+
+        invoke(graph)
+        repository.stock = 9
+        result = invoke(graph, "Sí, confirma", initial=False)
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertTrue(result["awaiting_quote_confirmation"])
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertIn("propuesta anterior", result["messages"][-1].content)
+        self.assertIn("valores actualizados", result["messages"][-1].content)
+
+    def test_labor_rate_change_requires_a_new_confirmation(self):
+        repository = FakeRepository()
+        settings = AdjustableRateSettings()
+        graph = build_multiagent_graph(
+            settings=settings,
+            repository=repository,
+            model=make_model(),
+        )
+
+        invoke(graph)
+        settings.labor_hourly_rate = Decimal("90.00")
+        result = invoke(graph, "Sí, confirma", initial=False)
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertIn("tarifa de mano de obra", result["messages"][-1].content)
+        self.assertIn("Total indicativo calculado: 155.50", result["messages"][-1].content)
+
+    def test_declining_suggestion_does_not_persist_data(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                confirmation=QuoteConfirmation(decision="decline"),
+            ),
+        )
+
+        invoke(graph)
+        result = invoke(graph, "No, gracias", initial=False)
+
+        self.assertEqual(result["outcome"], "declined")
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertIn("No guardé", result["messages"][-1].content)
+
+    def test_unclear_confirmation_keeps_pending_suggestion(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                confirmation=QuoteConfirmation(decision="unclear"),
+            ),
+        )
+
+        invoke(graph)
+        result = invoke(graph, "¿Puedo pensarlo?", initial=False)
+
+        self.assertEqual(result["route"], "awaiting_confirmation")
+        self.assertTrue(result["awaiting_quote_confirmation"])
+        self.assertIsNone(repository.created_ticket)
+        self.assertIn("¿Confirmas", result["messages"][-1].content)
+
+    def test_stock_shortage_does_not_persist_ticket_or_quote(self):
         repository = FakeRepository(stock=1)
         graph = build_multiagent_graph(
             settings=make_settings(),
@@ -173,9 +303,9 @@ class MultiagentGraphTests(unittest.TestCase):
         result = invoke(graph)
 
         self.assertEqual(result["outcome"], "inventory_unavailable")
-        self.assertIsNotNone(repository.created_ticket)
+        self.assertIsNone(repository.created_ticket)
         self.assertIsNone(repository.saved_quote)
-        self.assertIn("no hay stock suficiente", result["messages"][-1].content)
+        self.assertIn("stock actual es insuficiente", result["messages"][-1].content)
 
     def test_requires_customer_record_before_creating_ticket(self):
         repository = FakeRepository(customer=False)
