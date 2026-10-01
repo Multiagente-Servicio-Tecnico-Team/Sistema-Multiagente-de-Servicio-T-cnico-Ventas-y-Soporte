@@ -25,10 +25,10 @@ class ServiceState(TypedDict, total=False):
     estimated_labor_hours: Decimal
     required_parts: list[dict[str, Any]]
     matched_parts: list[dict[str, Any]]
-    ticket_id: int
+    ticket_id: int | None
     ticket_code: str
-    quote_id: int
-    quote: dict[str, Any]
+    quote_id: int | None
+    quote: dict[str, Any] | None
     outcome: str
 
 

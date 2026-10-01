@@ -2,8 +2,6 @@ import unittest
 from dataclasses import replace
 from decimal import Decimal
 
-from langchain_core.messages import HumanMessage
-
 from app.agents.graph import build_multiagent_graph, calculate_quote
 from app.agents.schemas import IntakeDecision, PartRequest, TechnicalDiagnosis
 from app.settings import Settings
@@ -106,8 +104,18 @@ def make_model(
 def invoke(graph):
     return graph.invoke(
         {
-            "messages": [HumanMessage(content="Mi laptop se calienta y se apaga.")],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Mi laptop se calienta y se apaga.",
+                }
+            ],
             "customer_email": "ana@example.com",
+            "outcome": "pending",
+            "ticket_id": None,
+            "ticket_code": "",
+            "quote_id": None,
+            "quote": None,
         },
         config={
             "configurable": {"thread_id": "test-session"},
