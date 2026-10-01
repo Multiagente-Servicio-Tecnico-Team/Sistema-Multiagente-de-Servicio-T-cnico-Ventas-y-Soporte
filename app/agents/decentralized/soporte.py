@@ -2,8 +2,11 @@ from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
 from app.agents.decentralized.state import AgentState
-from app.agents.decentralized.tools.soporte_tools import consultar_estado_ticket
-
+from app.agents.decentralized.tools.soporte_tools import (
+    consultar_estado_ticket,
+    transferir_a_tecnico,
+    transferir_a_ventas,
+)
 
 # Carga las variables del archivo .env
 load_dotenv()
@@ -16,7 +19,9 @@ llm = ChatGroq(
 
 # Herramientas disponibles para el agente de Soporte
 soporte_tools = [
-    consultar_estado_ticket
+    consultar_estado_ticket,
+    transferir_a_tecnico,
+    transferir_a_ventas,
 ]
 
 # Vinculamos las herramientas con el LLM
@@ -34,11 +39,11 @@ Tus responsabilidades son:
   el estado de un ticket.
 - No inventar información sobre tickets.
 
-Si una solicitud requiere conocimientos técnicos especializados,
-debes indicar que debe ser transferida al agente Técnico.
+Si el usuario reporta un problema técnico con su equipo que requiere
+diagnóstico, debes utilizar la herramienta transferir_a_tecnico.
 
-Si la solicitud está relacionada con compras o productos,
-debes indicar que debe ser transferida al agente de Ventas.
+Si el usuario solicita precios, cotizaciones, compras o información
+comercial, debes utilizar la herramienta transferir_a_ventas.
 """
 
 

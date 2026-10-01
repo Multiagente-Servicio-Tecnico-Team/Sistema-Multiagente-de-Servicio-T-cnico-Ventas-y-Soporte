@@ -20,3 +20,19 @@ def consultar_estado_ticket(numero_ticket: int) -> str:
         return f"El ticket {numero_ticket} se encuentra: {estado}"
 
     return f"No se encontró el ticket {numero_ticket}"
+
+@tool
+def transferir_a_tecnico(motivo: str) -> str:
+    """
+    Transfiere una solicitud al agente Técnico cuando el problema
+    requiere diagnóstico o conocimientos técnicos especializados.
+    """
+    return f"TRANSFERIR_TECNICO: {motivo}"
+
+@tool
+def transferir_a_ventas(motivo: str) -> str:
+    """
+    Transfiere una solicitud al agente de Ventas cuando el usuario
+    requiere información comercial, precios o cotizaciones.
+    """
+    return f"TRANSFERIR_VENTAS: {motivo}"

@@ -7,3 +7,4 @@ from langgraph.graph.message import add_messages
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     current_agent: str
+    next_agent: str
