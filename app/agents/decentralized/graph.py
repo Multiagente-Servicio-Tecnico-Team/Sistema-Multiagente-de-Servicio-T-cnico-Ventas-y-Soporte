@@ -29,6 +29,52 @@ def route_soporte_tools(state: AgentState):
     # regresamos al agente de Soporte
     return "soporte"
 
+def route_tecnico_tools(state: AgentState):
+    """
+    Decide qué agente debe continuar después de ejecutar
+    una herramienta del agente Técnico.
+    """
+    ultimo_mensaje = state["messages"][-1]
+
+    # Si Técnico ejecutó explícitamente el handoff a Ventas
+    if "TRANSFERIR_VENTAS" in ultimo_mensaje.content:
+        return "ventas"
+
+    # Si Técnico acaba de realizar un diagnóstico,
+    # verificamos si la solicitud original también pedía
+    # precio o cotización.
+    if getattr(ultimo_mensaje, "name", None) == "diagnosticar_problema":
+        mensaje_usuario = state["messages"][0].content.lower()
+
+        palabras_comerciales = [
+            "precio",
+            "cuesta",
+            "costo",
+            "cotizacion",
+            "cotización",
+            "presupuesto",
+        ]
+
+        if any(
+            palabra in mensaje_usuario
+            for palabra in palabras_comerciales
+        ):
+            return "ventas"
+
+    # Si solo era un diagnóstico, vuelve al agente Técnico
+    return "tecnico"
+
+def route_ventas_tools(state: AgentState):
+    """
+    Decide qué agente debe continuar después de ejecutar
+    una herramienta del agente de Ventas.
+    """
+    ultimo_mensaje = state["messages"][-1]
+
+    if "TRANSFERIR_TECNICO" in ultimo_mensaje.content:
+        return "tecnico"
+
+    return "ventas"
 
 # 1. Creamos el grafo utilizando nuestro estado compartido
 builder = StateGraph(AgentState)
@@ -124,8 +170,17 @@ builder.add_conditional_edges(
     },
 )
 
-# Después de ejecutar una tool, regresamos a Técnico
-builder.add_edge("tecnico_tools", "tecnico")
+# Después de ejecutar una tool de Técnico:
+# - si solicitó transferencia -> va a Ventas
+# - si fue diagnóstico -> regresa a Técnico
+builder.add_conditional_edges(
+    "tecnico_tools",
+    route_tecnico_tools,
+    {
+        "ventas": "ventas",
+        "tecnico": "tecnico",
+    },
+)
 
 # =========================================================
 # FLUJO DEL AGENTE DE VENTAS
@@ -143,8 +198,17 @@ builder.add_conditional_edges(
     },
 )
 
-# Después de ejecutar una tool, regresamos a Ventas
-builder.add_edge("ventas_tools", "ventas")
+# Después de ejecutar una tool de Ventas:
+# - si solicitó transferencia -> va a Técnico
+# - si fue una cotización -> regresa a Ventas
+builder.add_conditional_edges(
+    "ventas_tools",
+    route_ventas_tools,
+    {
+        "tecnico": "tecnico",
+        "ventas": "ventas",
+    },
+)
 
 # =========================================================
 # COMPILACIÓN DEL GRAFO

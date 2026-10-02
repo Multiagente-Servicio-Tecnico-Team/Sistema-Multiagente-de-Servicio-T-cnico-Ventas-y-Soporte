@@ -39,3 +39,11 @@ def diagnosticar_problema(sintoma: str) -> str:
         "No se encontró un diagnóstico preliminar para el síntoma indicado. "
         "Se requiere una revisión técnica más detallada."
     )
+
+@tool
+def transferir_a_ventas(motivo: str) -> str:
+    """
+    Transfiere una solicitud al agente de Ventas cuando el usuario
+    requiere información sobre precios o una cotización.
+    """
+    return f"TRANSFERIR_VENTAS: {motivo}"

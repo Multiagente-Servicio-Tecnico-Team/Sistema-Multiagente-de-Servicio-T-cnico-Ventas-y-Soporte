@@ -14,7 +14,11 @@ load_dotenv()
 # Modelo LLM utilizado por el agente
 llm = ChatGroq(
     model="openai/gpt-oss-20b",
-    temperature=0
+    temperature=0,
+    reasoning_effort="low",
+    model_kwargs={
+        "parallel_tool_calls": False,
+    }
 )
 
 # Herramientas disponibles para el agente de Soporte
@@ -44,6 +48,12 @@ diagnóstico, debes utilizar la herramienta transferir_a_tecnico.
 
 Si el usuario solicita precios, cotizaciones, compras o información
 comercial, debes utilizar la herramienta transferir_a_ventas.
+
+Si una solicitud contiene al mismo tiempo un problema técnico y una
+consulta sobre precios o cotizaciones, debes priorizar primero el
+problema técnico y utilizar transferir_a_tecnico. El agente Técnico
+se encargará posteriormente de transferir la solicitud a Ventas
+cuando corresponda.
 """
 
 

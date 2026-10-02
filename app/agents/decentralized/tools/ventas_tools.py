@@ -38,3 +38,11 @@ def generar_cotizacion(servicio: str) -> str:
         "No se encontró una cotización para el servicio solicitado. "
         "Se requiere evaluación comercial."
     )
+
+@tool
+def transferir_a_tecnico(motivo: str) -> str:
+    """
+    Transfiere una solicitud al agente Técnico cuando el usuario
+    requiere diagnóstico o conocimientos técnicos especializados.
+    """
+    return f"TRANSFERIR_TECNICO: {motivo}"

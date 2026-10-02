@@ -3,7 +3,10 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
 
 from app.agents.decentralized.state import AgentState
-from app.agents.decentralized.tools.ventas_tools import generar_cotizacion
+from app.agents.decentralized.tools.ventas_tools import (
+    generar_cotizacion,
+    transferir_a_tecnico,
+)
 
 
 # Carga las variables del archivo .env
@@ -13,13 +16,18 @@ load_dotenv()
 # Modelo LLM utilizado por el agente
 llm = ChatGroq(
     model="openai/gpt-oss-20b",
-    temperature=0
+    temperature=0,
+    reasoning_effort="low",
+    model_kwargs={
+        "parallel_tool_calls": False,
+    }
 )
 
 
 # Herramientas disponibles para el agente de Ventas
 ventas_tools = [
-    generar_cotizacion
+    generar_cotizacion,
+    transferir_a_tecnico,
 ]
 
 
@@ -39,13 +47,19 @@ Tus responsabilidades son:
   el precio de un servicio.
 - No inventar precios que no hayan sido proporcionados por la herramienta.
 
-Si la solicitud corresponde al estado de un ticket o soporte general,
-debes indicar que debe ser transferida al agente de Soporte.
+Puedes recibir solicitudes que previamente fueron atendidas por otros
+agentes del sistema.
 
-Si la solicitud requiere diagnóstico técnico,
-debes indicar que debe ser transferida al agente Técnico.
+IMPORTANTE:
+- Si en el historial existe un ToolMessage con el resultado de
+  diagnosticar_problema, considera que el diagnóstico técnico ya fue realizado.
+- Si el diagnóstico ya fue realizado y el usuario solicita un precio
+  o cotización, debes utilizar generar_cotizacion.
+- En ese caso, no debes solicitar otro diagnóstico ni transferir
+  nuevamente al agente Técnico.
+- Para una solicitud de reparación, utiliza generar_cotizacion
+  indicando "reparacion" como servicio.
 """
-
 
 def ventas_node(state: AgentState):
     """
