@@ -157,6 +157,47 @@ def invoke(graph, message="Mi laptop se calienta y se apaga.", *, initial=True):
 
 
 class MultiagentGraphTests(unittest.TestCase):
+    def test_intake_schema_accepts_provider_response_above_previous_limit(self):
+        long_response = "Recomendación paso a paso. " * 100
+        decision = IntakeDecision(
+            route="service",
+            request_type="REPAIR",
+            title="Laptop lenta",
+            failure_description="Demora en arrancar",
+            informational_response=long_response,
+        )
+
+        self.assertEqual(decision.informational_response, long_response)
+        schema = IntakeDecision.model_json_schema()
+        self.assertEqual(
+            schema["properties"]["informational_response"]["anyOf"][0]["maxLength"],
+            4000,
+        )
+
+    def test_diagnosis_normalizes_labor_hour_range_to_midpoint(self):
+        diagnosis = TechnicalDiagnosis(
+            provisional_diagnosis="Posible unidad lenta.",
+            estimated_labor_hours="1-2",
+        )
+
+        self.assertEqual(diagnosis.estimated_labor_hours, Decimal("1.5"))
+
+    def test_diagnosis_normalizes_decimal_comma_range(self):
+        diagnosis = TechnicalDiagnosis(
+            provisional_diagnosis="Posible unidad lenta.",
+            estimated_labor_hours="1,0–2,0",
+        )
+
+        self.assertEqual(diagnosis.estimated_labor_hours, Decimal("1.5"))
+
+    def test_diagnosis_rejects_invalid_labor_hour_ranges(self):
+        for value in ("2-1", "0-101"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                TechnicalDiagnosis(
+                    provisional_diagnosis="Diagnóstico provisional.",
+                    estimated_labor_hours=value,
+                )
+
     def test_calculates_totals_without_floating_point_arithmetic(self):
         quote = calculate_quote(
             labor_hours=Decimal("1.50"),

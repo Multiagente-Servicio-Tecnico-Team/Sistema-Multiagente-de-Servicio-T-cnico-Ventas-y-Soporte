@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from groq import APIError as GroqAPIError
 from langchain_core.exceptions import OutputParserException
 from langsmith import Client, tracing_context
@@ -96,6 +96,15 @@ def get_graph() -> Any:
     return build_multiagent_graph(settings=load_settings())
 
 
+def redact_trace_error(values: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(values.get("error"), str):
+        return {
+            **values,
+            "error": "Provider error details redacted; inspect local application logs.",
+        }
+    return values
+
+
 def get_trace_context() -> AbstractContextManager[None]:
     settings = load_settings()
     if not settings.langsmith_tracing:
@@ -104,6 +113,7 @@ def get_trace_context() -> AbstractContextManager[None]:
         api_key=settings.langsmith_api_key,
         hide_inputs=settings.langsmith_hide_inputs,
         hide_outputs=settings.langsmith_hide_outputs,
+        anonymizer=redact_trace_error,
     )
     return tracing_context(
         enabled=True,
@@ -122,6 +132,11 @@ session_registry = ChatSessionRegistry()
 @app.get("/", include_in_schema=False)
 def chat_page() -> FileResponse:
     return FileResponse(STATIC_INDEX)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @app.post("/api/chat", response_model=ChatResponse)

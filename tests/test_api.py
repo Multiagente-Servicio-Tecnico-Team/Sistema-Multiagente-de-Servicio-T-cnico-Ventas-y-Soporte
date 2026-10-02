@@ -6,7 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
-from app.main import app, get_trace_context
+from app.main import app, get_trace_context, redact_trace_error
 from app.settings import Settings
 
 
@@ -53,6 +53,11 @@ class ChatApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Asistente de servicio técnico", response.text)
+
+    def test_favicon_request_does_not_log_a_missing_resource(self):
+        response = self.client.get("/favicon.ico")
+
+        self.assertEqual(response.status_code, 204)
 
     def test_chat_returns_indicative_quote_without_ticket_before_confirmation(self):
         graph = FakeGraph()
@@ -226,6 +231,7 @@ class ChatApiTests(unittest.TestCase):
             api_key="test-tracing-key",
             hide_inputs=True,
             hide_outputs=True,
+            anonymizer=redact_trace_error,
         )
         tracing_factory.assert_called_once_with(
             enabled=True,
@@ -233,6 +239,17 @@ class ChatApiTests(unittest.TestCase):
             client=client_factory.return_value,
         )
         self.assertIs(trace_context, tracing_factory.return_value)
+
+    def test_langsmith_anonymizer_redacts_provider_error_details(self):
+        error = "Groq failed_generation contains generated response text."
+
+        redacted = redact_trace_error(
+            {"error": error, "run_type": "llm"}
+        )
+
+        self.assertNotIn(error, redacted["error"])
+        self.assertIn("redacted", redacted["error"])
+        self.assertEqual(redacted["run_type"], "llm")
 
 
 if __name__ == "__main__":
