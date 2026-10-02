@@ -1,31 +1,127 @@
-# Sistema-Multiagente-de-Servicio-Técnico-Ventas-y-Soporte
+# Sistema multiagente de servicio técnico, ventas y soporte
 
-## Chat multiagente local
+Aplicación de chat en español construida con FastAPI y LangGraph. Un supervisor
+coordina agentes especializados para evaluar fallas, consultar inventario en
+PostgreSQL y presentar cotizaciones. Groq proporciona el modelo de lenguaje y
+LangSmith registra trazas de ejecución.
 
-El prototipo usa FastAPI para la interfaz web y la API, LangGraph para coordinar
-los agentes, Groq como proveedor LLM, LangSmith para trazas y PostgreSQL para
-clientes, inventario, tickets y cotizaciones.
+## Arquitectura jerárquica
 
-### Requisitos previos
+El supervisor de atención es el punto de coordinación. Decide si debe pedir
+aclaraciones, responder una consulta informativa o derivar una solicitud técnica.
+Los nodos especialistas realizan tareas acotadas y devuelven resultados al flujo
+controlado por el supervisor.
 
-- Python 3.10 o posterior.
-- PostgreSQL con el esquema descrito en `info.md` ya creado. La aplicación no crea
-  ni migra tablas automáticamente.
-- Una API key de Groq y el nombre de un modelo habilitado en tu cuenta.
-- Una API key de LangSmith si `LANGSMITH_TRACING=true`.
-- Un cliente activo con rol `CUSTOMER` y un repuesto activo en `spare_parts` para
-  probar el flujo de cotización.
+```mermaid
+flowchart TD
+    Cliente["Cliente / chat web"] --> API["FastAPI"]
+    API --> Supervisor["Supervisor de atención"]
 
-### Esquema PostgreSQL
+    Supervisor -->|Faltan datos| Aclaracion["Solicitar aclaración"]
+    Supervisor -->|Consulta general| Informacion["Respuesta informativa"]
+    Supervisor -->|Falla técnica| RAG["Recuperación RAG local"]
 
-La base de desarrollo ya tenía tablas y ENUMs en español. Su estructura se
-renombró en el mismo sitio al esquema en inglés de `info.md`, preservando filas,
-índices, secuencias de identidad y relaciones. La migración de una sola ejecución está en
-[`sql/migrate_spanish_schema_to_english.sql`](sql/migrate_spanish_schema_to_english.sql).
-No la ejecutes de nuevo después de migrar. Para una base vacía, primero crea el
-esquema con el SQL de `info.md`; la aplicación no aplica DDL automáticamente.
+    subgraph Especialistas["Agentes y servicios especializados"]
+        direction TD
+        RAG --> Tecnico["Agente de soporte técnico"]
+        Tecnico --> Almacen["Agente de almacén y logística"]
+        Almacen --> Ventas["Agente de ventas"]
+    end
 
-### Instalación en Windows
+    Almacen <-->|Consultar producto, precio y stock| PostgreSQL[("PostgreSQL")]
+    Ventas --> Propuesta["Propuesta indicativa"]
+    Propuesta --> Cliente
+    Cliente -->|Confirmación| API
+    API --> Supervisor
+    Supervisor -->|Revalidar propuesta| Almacen
+    Ventas -->|Datos confirmados| Persistencia["Persistencia transaccional"]
+    Persistencia --> PostgreSQL
+    Persistencia --> Respuesta["Ticket y cotización guardados"]
+    Respuesta --> Cliente
+
+    Supervisor -. "Clasificación y confirmación" .-> Groq["Groq"]
+    Tecnico -. "Diagnóstico estructurado" .-> Groq
+    Supervisor -.-> LangSmith["LangSmith"]
+    Tecnico -.-> LangSmith
+```
+
+## Agentes y responsabilidades
+
+| Agente / componente | Función |
+| --- | --- |
+| Supervisor de atención | Clasifica la intención, extrae la solicitud, solicita aclaraciones y procesa la confirmación o rechazo de la propuesta. |
+| Recuperación de conocimiento | Recupera guías sintéticas relevantes mediante búsqueda lexical local. |
+| Soporte técnico | Genera diagnóstico provisional, horas estimadas y repuestos sugeridos en una salida estructurada. |
+| Almacén y logística | Consulta productos activos, precio y stock mediante consultas parametrizadas en PostgreSQL. |
+| Ventas | Calcula mano de obra y repuestos con `Decimal`, usando la tarifa configurada y los precios actuales de la base. |
+| Persistencia | Guarda ticket, cotización, detalles y actualización de estado en una única transacción. |
+
+El LLM no genera SQL ni determina los precios finales. La disponibilidad de un
+repuesto se confirma desde PostgreSQL. Si no hay stock, el producto no puede
+identificarse de forma inequívoca o cambian los valores antes de confirmar, no se
+guarda una cotización desactualizada.
+
+## Flujo de servicio
+
+1. El cliente envía su email registrado y describe el equipo y la falla.
+2. El supervisor verifica que exista un cliente activo con rol `CUSTOMER`.
+3. La recuperación local busca casos sintéticos de sobrecalentamiento,
+   almacenamiento, memoria o batería.
+4. El agente técnico presenta un diagnóstico provisional y sugiere horas/repuestos.
+5. Almacén consulta los precios y existencias vigentes; ventas calcula la propuesta.
+6. El chat presenta la propuesta sin crear registros en PostgreSQL.
+7. Si el cliente confirma, se vuelve a comprobar inventario y precio. Si cambió la
+   propuesta, se muestran los importes actualizados y se solicita confirmación otra
+   vez.
+8. Con una confirmación vigente se guardan ticket, cotización y detalles dentro de
+   una transacción. Una respuesta negativa no genera escrituras.
+
+Las guías RAG son demostrativas. Sus rangos de coste en UM no se usan en el cálculo
+comercial; los totales se calculan con `LABOR_HOURLY_RATE` y los precios de
+PostgreSQL.
+
+## Tecnologías
+
+- Python 3.10+
+- FastAPI y Uvicorn
+- LangGraph y LangChain
+- Groq
+- LangSmith
+- PostgreSQL con SQLAlchemy y `pg8000`
+- Pydantic
+- `unittest`
+
+## Estructura
+
+```text
+app/
+├── agents/
+│   ├── graph.py             # Grafo jerárquico y flujo de agentes
+│   ├── retriever.py         # Recuperación lexical local
+│   └── schemas.py           # Contratos estructurados
+├── database/
+│   ├── connection.py        # Conexión SQLAlchemy
+│   └── repository.py        # Consultas y persistencia
+├── static/
+│   └── index.html           # Interfaz web de chat
+├── main.py                  # API FastAPI y sesiones
+└── settings.py              # Configuración desde entorno
+docs/
+└── knowledge_base/
+    └── simulated_cases.json # Guías sintéticas RAG
+sql/
+└── migrate_spanish_schema_to_english.sql
+tests/
+```
+
+## Requisitos y configuración
+
+Se requiere Python 3.10 o posterior, PostgreSQL accesible con el esquema esperado,
+una clave de Groq y un cliente activo registrado con rol `CUSTOMER`. Para activar
+trazas también se requiere una clave de LangSmith. La aplicación no crea usuarios
+ni instala o migra el esquema automáticamente.
+
+Desde la raíz del repositorio, crea el entorno virtual e instala dependencias:
 
 ```powershell
 py -m venv .venv
@@ -35,50 +131,98 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Edita `.env` sin compartirlo ni subirlo al repositorio. Configura:
+Configura las siguientes variables localmente en `.env`:
 
-- `GROQ_API_KEY` y `GROQ_MODEL`.
-- `DATABASE_URL`, por ejemplo
-  `postgresql+pg8000://usuario:contraseña@localhost:5432/base`.
-- `LANGSMITH_API_KEY`, `LANGSMITH_TRACING=true` y `LANGSMITH_PROJECT`.
-- `LABOR_HOURLY_RATE` como importe decimal no negativo. No se asume moneda porque
-  el esquema SQL define importes `NUMERIC` sin una moneda.
+```dotenv
+GROQ_API_KEY=tu_clave_groq
+GROQ_MODEL=openai/gpt-oss-20b
+DATABASE_URL=postgresql+pg8000://usuario:contraseña@localhost:5432/base
+LABOR_HOURLY_RATE=10
 
-`LANGSMITH_HIDE_INPUTS=true` y `LANGSMITH_HIDE_OUTPUTS=true` están activados en la
-plantilla para evitar que los payloads de entrada y salida se registren en trazas.
-El proyecto de LangSmith registra metadata con un ID de sesión opaco, no el email.
-
-### Ejecutar
-
-```powershell
-uvicorn app.main:app --reload
+LANGSMITH_API_KEY=tu_clave_langsmith
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT=agente-tecnico
+LANGSMITH_HIDE_INPUTS=true
+LANGSMITH_HIDE_OUTPUTS=true
 ```
 
-Abre <http://127.0.0.1:8000>. La interfaz solicita el email de un cliente ya
-registrado y mantiene el chat en memoria durante la sesión del servidor. Cada
-mensaje usa `POST /api/chat`; los datos de conversación no se escriben en
-PostgreSQL. El chat primero muestra una evaluación y cotización indicativas: las
-guías locales de `docs/knowledge_base/simulated_cases.json` son sintéticas, se
-recuperan por coincidencia lexical y sus rangos UM no se usan como precio. Los
-totales siempre se calculan con tarifa laboral y precios/stock de PostgreSQL.
-No se guarda nada hasta que el cliente responde afirmativamente; entonces se
-revalida el inventario y se crean ticket, cotización y detalles en una transacción.
-Si cambió el stock o el precio, el chat presenta los valores actualizados y solicita
-una nueva confirmación. Un “no” cancela sin insertar datos.
+`LABOR_HOURLY_RATE` es la tarifa por hora de mano de obra configurada para la
+aplicación. El esquema de base de datos no establece moneda. No subas `.env` ni
+publiques sus claves.
 
-Para ejecutar las pruebas unitarias:
+## Ejecución local
+
+Con el entorno virtual activo y `.env` configurado:
+
+```powershell
+python -m uvicorn app.main:app --reload
+```
+
+Abre <http://127.0.0.1:8000>. Ingresa el email de un cliente activo registrado y
+describe la falla, por ejemplo: `Mi laptop está lenta y demora en arrancar`.
+Revisa la propuesta; responde `sí` para guardar o `no` para cancelar. Detén el
+servidor con `Ctrl+C`.
+
+## Pruebas
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-Las pruebas incluyen recuperación RAG, confirmación de varios turnos, revalidación
-de inventario y rollback de la persistencia transaccional. No crean tickets ni
-cotizaciones en PostgreSQL real.
+La suite cubre la API, el flujo del grafo, recuperación RAG, confirmación,
+revalidación de precios/stock y transacciones con dependencias simuladas. No crea
+cotizaciones de prueba en PostgreSQL.
 
-### Límite de seguridad del prototipo
+## API
 
-El email solo identifica un registro y **no autentica al cliente**. Cualquier
-persona que conozca el email de un cliente puede iniciar una sesión como ese
-registro. Mantén el prototipo en local o una red de pruebas; antes de exponerlo,
-añade autenticación real y autorización por cliente.
+### `GET /`
+
+Sirve la interfaz web.
+
+### `POST /api/chat`
+
+Envía un mensaje al hilo identificado por un UUID opaco.
+
+```json
+{
+  "session_id": "2e1c1289-37b8-48ad-8520-74d8a05f7e2c",
+  "email": "cliente@example.com",
+  "message": "Mi laptop está lenta y demora en arrancar"
+}
+```
+
+La respuesta incluye `answer` y `outcome`. Antes de confirmar, puede incluir una
+cotización indicativa; `ticket_id`, `ticket_code` y `quote_id` solo se entregan
+cuando los registros se guardaron correctamente.
+
+## Trazabilidad y privacidad
+
+Con `LANGSMITH_TRACING=true`, las ejecuciones se envían al proyecto configurado. La
+metadata usa un ID de sesión opaco, no el email. `LANGSMITH_HIDE_INPUTS` y
+`LANGSMITH_HIDE_OUTPUTS` están activados por defecto. Los detalles de errores del
+proveedor se redactan antes de enviar la traza; el log local registra el tipo de
+error.
+
+## Despliegue y operación
+
+La aplicación se ejecuta como servicio ASGI con Uvicorn. El comando de desarrollo
+local es:
+
+```powershell
+python -m uvicorn app.main:app --reload
+```
+
+Para un proceso Uvicorn sin recarga automática, el comando es:
+
+```text
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+La configuración de PostgreSQL, Groq, LangSmith y tarifa se proporciona mediante
+variables de entorno. El estado conversacional se conserva en memoria del proceso
+y desaparece al reiniciarlo; el servicio no persiste sesiones ni comparte estado
+entre varias instancias.
+
+El email identifica un registro de cliente y **no autentica** a la persona. El
+servicio está destinado a pruebas locales; no lo expongas a una red pública con el
+flujo de identificación actual.
