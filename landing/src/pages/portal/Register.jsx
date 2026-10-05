@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { ArrowRight, BellRing, CircleCheck, Contact, LoaderCircle, Mail, Smartphone } from "lucide-react";
 import { Field, InputIcon } from "../../components/ui.jsx";
 import PasswordFields, { isStrongPassword } from "../../components/PasswordFields.jsx";
@@ -25,7 +25,7 @@ export function validateRegister(form) {
 }
 
 export default function Register({ api = defaultApi }) {
-  const { login } = useStore();
+  const { session, login } = useStore();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: "", email: "", prefix: "+51", phone: "", password: "", confirm: "", terms: false });
   const [errors, setErrors] = useState({});
@@ -35,6 +35,8 @@ export default function Register({ api = defaultApi }) {
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
   const emailOk = EMAIL_RE.test(form.email.trim());
 
+  // Un cliente con sesión abierta no necesita registrarse de nuevo.
+  if (session?.role === "client" && !loading) return <Navigate to="/portal/tickets" replace />;
 
   const submit = async (e) => {
     e.preventDefault();

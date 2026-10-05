@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, AtSign, Info, Lock, LoaderCircle, TriangleAlert } from "lucide-react";
 import { Field, InputIcon, PasswordInput } from "../../components/ui.jsx";
 import { EMAIL_RE, useStore } from "../../data/store.jsx";
@@ -19,7 +19,7 @@ export function FormAlert({ children }) {
  * Llama a POST /login mediante el cliente de autenticación (o al simulador si no hay backend).
  */
 export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api = defaultApi }) {
-  const { login } = useStore();
+  const { session, login } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState("");
@@ -27,6 +27,9 @@ export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Si ya hay sesión con este rol, el formulario no tiene sentido: ir directo al área.
+  if (session?.role === role && !loading) return <Navigate to={location.state?.from || defaultTo} replace />;
 
   const submit = async (e) => {
     e.preventDefault();
