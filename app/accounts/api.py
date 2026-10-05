@@ -1,11 +1,12 @@
-"""API de cuentas: POST /registro, POST /login, POST /logout, GET /me y GET /salud.
+"""API de cuentas: registro, inicio y cierre de sesión, recuperación y restablecimiento de contraseña.
 
 Ejecutar:  uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
 """
 import logging
+from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -14,15 +15,25 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.accounts.config import Settings
+from app.accounts.mailer import build_mailer, send_password_reset
 from app.accounts.models import User
-from app.accounts.schemas import LoginIn, RegistroIn, UsuarioRespuesta
-from app.accounts.security import LoginLimiter, dummy_hash, read_session, sign_session
-from app.accounts.service import EmailAlreadyRegistered, authenticate, register_user, to_out
+from app.accounts.schemas import LoginIn, RecuperarIn, RegistroIn, RestablecerIn, UsuarioRespuesta
+from app.accounts.security import LoginLimiter, dummy_hash, password_fingerprint, read_session, sign_session
+from app.accounts.service import (
+    EmailAlreadyRegistered,
+    authenticate,
+    register_user,
+    request_password_reset,
+    reset_password,
+    to_out,
+)
 
 logger = logging.getLogger(__name__)
 
 INVALID_CREDENTIALS = "Correo o contraseña incorrectos."
 TOO_MANY = "Demasiados intentos. Espera unos minutos antes de volver a intentar."
+RESET_SENT = "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña."
+INVALID_TOKEN = "El enlace no es válido o ya expiró."
 
 
 def _validation_response(exc: RequestValidationError) -> JSONResponse:
@@ -37,7 +48,7 @@ def _validation_response(exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": "Datos inválidos.", "field": field, "errors": errors})
 
 
-def create_app(settings: Settings | None = None, session_factory: sessionmaker | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, session_factory: sessionmaker | None = None, mailer=None) -> FastAPI:
     load_dotenv()
     settings = settings or Settings.from_env()
     if session_factory is None:
@@ -49,6 +60,8 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
     app = FastAPI(title="TechFix.AI · Cuentas", version="1.0.0")
     app.state.settings = settings
     app.state.limiter = LoginLimiter(settings.max_failed_logins, settings.lockout_seconds)
+    app.state.reset_limiter = LoginLimiter(settings.max_reset_requests, settings.lockout_seconds)
+    app.state.mailer = mailer or build_mailer(settings.mail_mode, settings.outbox_dir)
     fallback_hash = dummy_hash(settings.bcrypt_rounds)
     max_age = settings.session_hours * 3600
 
@@ -86,7 +99,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
     def set_session_cookie(response: Response, user: User) -> None:
         response.set_cookie(
             settings.cookie_name,
-            sign_session(user.id, settings.auth_secret, max_age),
+            sign_session(user.id, settings.auth_secret, max_age, password_fingerprint(user.password_hash, settings.auth_secret)),
             max_age=max_age,
             httponly=True,
             secure=settings.secure_cookie,
@@ -123,11 +136,34 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
 
     @app.get("/me", response_model=UsuarioRespuesta)
     def me(request: Request, db: Session = Depends(get_db)):
-        user_id = read_session(request.cookies.get(settings.cookie_name), settings.auth_secret)
-        user = db.get(User, user_id) if user_id else None
-        if user is None or not user.active:
+        session = read_session(request.cookies.get(settings.cookie_name), settings.auth_secret)
+        user = db.get(User, session[0]) if session else None
+        # Una cookie emitida antes de cambiar la contraseña ya no es válida.
+        if user is None or not user.active or session[1] != password_fingerprint(user.password_hash, settings.auth_secret):
             return JSONResponse(status_code=401, content={"detail": "Sesión no válida o vencida."})
         return {"usuario": to_out(user)}
+
+    @app.post("/recuperar")
+    def recuperar(body: RecuperarIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+        reset_limiter: LoginLimiter = app.state.reset_limiter
+        if reset_limiter.blocked(body.email):
+            return JSONResponse(status_code=429, content={"detail": TOO_MANY})
+        reset_limiter.fail(body.email)
+        result = request_password_reset(db, body.email, settings.reset_minutes)
+        if result is not None:
+            user, raw_token = result
+            link = f"{settings.frontend_url}/portal/restablecer?token={quote(raw_token)}"
+            # El envío va en segundo plano: la respuesta tarda lo mismo exista o no la cuenta.
+            background.add_task(send_password_reset, app.state.mailer, user.email, user.name, link, settings.reset_minutes)
+        return {"detail": RESET_SENT}
+
+    @app.post("/restablecer")
+    def restablecer(body: RestablecerIn, db: Session = Depends(get_db)):
+        user = reset_password(db, body.token, body.password, settings.bcrypt_rounds)
+        if user is None:
+            return JSONResponse(status_code=410, content={"detail": INVALID_TOKEN, "code": "invalid_token"})
+        app.state.limiter.reset(user.email)
+        return {"detail": "Contraseña actualizada."}
 
     @app.get("/salud")
     def salud(db: Session = Depends(get_db)):

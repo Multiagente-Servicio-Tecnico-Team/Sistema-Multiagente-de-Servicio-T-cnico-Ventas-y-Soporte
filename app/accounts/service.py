@@ -1,11 +1,13 @@
-"""Reglas de registro e inicio de sesión sobre la tabla users."""
-from sqlalchemy import func, select
+"""Reglas de registro, inicio de sesión y restablecimiento de contraseña."""
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.accounts.models import User
+from app.accounts.models import RecoveryToken, User
 from app.accounts.schemas import RegistroIn, UsuarioOut
-from app.accounts.security import hash_password, verify_password
+from app.accounts.security import hash_password, hash_reset_token, new_reset_token, verify_password
 
 
 class EmailAlreadyRegistered(Exception):
@@ -51,4 +53,55 @@ def authenticate(db: Session, email: str, password: str, fallback_hash: str) -> 
         return None
     if not verify_password(password, user.password_hash) or not user.active:
         return None
+    return user
+
+
+def _utc(value: datetime) -> datetime:
+    # SQLite devuelve fechas sin zona; PostgreSQL (timestamptz) con zona.
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _invalidate_tokens(db: Session, user_id: int) -> None:
+    db.execute(
+        update(RecoveryToken)
+        .where(RecoveryToken.user_id == user_id, RecoveryToken.used.is_(False))
+        .values(used=True)
+    )
+
+
+def request_password_reset(db: Session, email: str, minutes: int) -> tuple[User, str] | None:
+    """Crea un token si la cuenta existe y está activa. Devuelve (usuario, token del enlace) o None.
+
+    Solo el último enlace vale: los tokens pendientes anteriores se marcan como usados.
+    """
+    user = find_by_email(db, email)
+    if user is None or not user.active:
+        return None
+    _invalidate_tokens(db, user.id)
+    raw, digest = new_reset_token()
+    db.add(RecoveryToken(user_id=user.id, token=digest, expires_at=datetime.now(timezone.utc) + timedelta(minutes=minutes)))
+    db.commit()
+    return user, raw
+
+
+def reset_password(db: Session, raw_token: str, new_password: str, rounds: int) -> User | None:
+    """Cambia la contraseña si el token es válido, vigente y sin usar. Devuelve el usuario o None."""
+    row = db.scalar(select(RecoveryToken).where(RecoveryToken.token == hash_reset_token(raw_token)))
+    now = datetime.now(timezone.utc)
+    if row is None or row.used or _utc(row.expires_at) <= now:
+        return None
+    user = db.get(User, row.user_id)
+    if user is None or not user.active:
+        return None
+    # Marcado condicional: si dos peticiones usan el mismo enlace a la vez, solo una gana.
+    claimed = db.execute(
+        update(RecoveryToken).where(RecoveryToken.id == row.id, RecoveryToken.used.is_(False)).values(used=True)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        return None
+    user.password_hash = hash_password(new_password, rounds)
+    user.updated_at = now
+    _invalidate_tokens(db, user.id)
+    db.commit()
     return user

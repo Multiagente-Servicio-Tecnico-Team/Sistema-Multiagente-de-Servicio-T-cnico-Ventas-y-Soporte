@@ -5,6 +5,9 @@ SQLAlchemy==2.1.1
 pg8000==1.31.5
 bcrypt==5.0.0
 python-dotenv==1.2.3
+# Plantillas del correo de restablecimiento
+Jinja2==3.1.6
+MarkupSafe==3.0.3
 # Pruebas
 pytest==8.4.2
 httpx==0.28.1

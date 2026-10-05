@@ -9,6 +9,20 @@ EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 PHONE_RE = re.compile(r"^\+\d{8,15}$")
 
 
+def check_password_policy(value: str) -> str:
+    """Política común de registro y restablecimiento: 8 a 72 bytes, mayúscula, número y símbolo."""
+    size = len(value.encode("utf-8"))
+    checks = [
+        8 <= size <= 72,
+        re.search(r"[A-Z]", value),
+        re.search(r"\d", value),
+        re.search(r"[^A-Za-z0-9]", value),
+    ]
+    if not all(checks):
+        raise ValueError("La contraseña debe tener entre 8 y 72 caracteres, una mayúscula, un número y un símbolo.")
+    return value
+
+
 def _normalize_email(value: str) -> str:
     email = value.strip().lower()
     if len(email) > 255 or not EMAIL_RE.match(email):
@@ -41,16 +55,7 @@ class RegistroIn(BaseModel):
     @field_validator("password")
     @classmethod
     def password_segura(cls, value: str) -> str:
-        size = len(value.encode("utf-8"))
-        checks = [
-            8 <= size <= 72,
-            re.search(r"[A-Z]", value),
-            re.search(r"\d", value),
-            re.search(r"[^A-Za-z0-9]", value),
-        ]
-        if not all(checks):
-            raise ValueError("La contraseña debe tener entre 8 y 72 caracteres, una mayúscula, un número y un símbolo.")
-        return value
+        return check_password_policy(value)
 
     @model_validator(mode="after")
     def separar_nombre(self) -> "RegistroIn":
@@ -78,6 +83,29 @@ class LoginIn(BaseModel):
     @classmethod
     def email_normalizado(cls, value: str) -> str:
         return value.strip().lower()
+
+
+class RecuperarIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def email_valido(cls, value: str) -> str:
+        return _normalize_email(value)
+
+
+class RestablecerIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    token: str = Field(min_length=16, max_length=256)
+    password: str
+
+    @field_validator("password")
+    @classmethod
+    def password_segura(cls, value: str) -> str:
+        return check_password_policy(value)
 
 
 class UsuarioOut(BaseModel):

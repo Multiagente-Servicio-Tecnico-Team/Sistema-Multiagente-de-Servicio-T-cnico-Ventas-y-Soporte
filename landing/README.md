@@ -71,8 +71,8 @@ El cliente `src/api/auth.js` decide el modo según `VITE_API_URL`:
 | `/registro` | `{ nombre, apellido, email, telefono, password }` | `201 { usuario }` · `409` correo duplicado · `422` datos inválidos |
 | `/login` | `{ email, password }` | `200 { usuario }` + cookie · `401` credenciales · `429` intentos |
 | `/logout` | — | `204` y borra la cookie |
-| `/recuperar` | `{ email }` | `200` siempre |
-| `/restablecer` | `{ token, password }` | `200` · `400/410` token inválido o vencido |
+| `/recuperar` | `{ email }` | `200` siempre; si la cuenta existe envía el enlace `/portal/restablecer?token=…` por correo |
+| `/restablecer` | `{ token, password }` | `200` · `400/410` enlace inválido, vencido o usado · `422` contraseña débil |
 
 `usuario` incluye `rol`: `CUSTOMER` entra al portal del cliente y `TECHNICIAN` o `ADMIN` al panel del taller;
 una cuenta de cliente no puede entrar al panel. El campo "Nombre y Apellido" se envía separado en `nombre` y
@@ -102,8 +102,9 @@ VITE_API_URL=http://localhost:8000
 npm --prefix landing test
 ```
 
-39 pruebas en 5 archivos: contrato de los cuatro endpoints, errores 401/409/410/5xx y de red, validación de
-registro, acceso, recuperación y restablecimiento, sesión sin contraseñas, redirecciones y consulta nueva.
+45 pruebas en 5 archivos: contrato de los endpoints de cuentas, errores 401/409/410/5xx y de red, validación de
+registro, acceso, recuperación y restablecimiento, roles, cierre de sesión, sesión sin contraseñas,
+redirecciones y consulta nueva.
 
 ## Compilación y despliegue
 
@@ -123,7 +124,5 @@ Genera `landing/dist/` (HTML, CSS y JS estáticos). Para publicarlo:
 ## Limitaciones actuales
 
 - En modo demostración (sin `VITE_API_URL`) no se verifican contraseñas ni se persisten datos al recargar.
-- La API de cuentas aún no implementa `/recuperar` ni `/restablecer`; esas pantallas solo funcionan en modo
-  demostración.
 - Tickets, inventario y asistente usan datos de demostración en memoria.
 - El asistente responde con textos fijos; aún no está conectado a los agentes LangGraph del backend.
