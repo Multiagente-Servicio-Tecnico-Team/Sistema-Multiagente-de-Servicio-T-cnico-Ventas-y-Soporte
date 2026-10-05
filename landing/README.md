@@ -102,7 +102,7 @@ VITE_API_URL=http://localhost:8000
 npm --prefix landing test
 ```
 
-45 pruebas en 5 archivos: contrato de los endpoints de cuentas, errores 401/409/410/5xx y de red, validación de
+56 pruebas en 6 archivos: contrato de los endpoints de cuentas, errores 401/409/410/5xx y de red, validación de
 registro, acceso, recuperación y restablecimiento, roles, cierre de sesión, sesión sin contraseñas,
 redirecciones y consulta nueva.
 
