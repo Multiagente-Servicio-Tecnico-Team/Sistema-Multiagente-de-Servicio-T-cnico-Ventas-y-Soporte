@@ -55,7 +55,7 @@ START
 | Soporte técnico | Propone diagnóstico provisional, horas de trabajo y repuestos por nombre/código. | No inventa existencias ni precios; su salida es estructurada y validada. |
 | Almacén y logística | Busca repuestos activos en `spare_parts` y lee precio y stock. | Solo SELECT parametrizados; los artículos sin stock se informan, no se cotizan. |
 | Ventas | Calcula mano de obra, subtotales y total usando valores validados del almacén. | La tarifa de mano de obra es configuración del servidor; nunca la fija el LLM. |
-| Recuperación de conocimiento | Recupera casos sintéticos en español por coincidencia lexical. | No usa embeddings; rangos UM son demostrativos y no entran al cálculo comercial. |
+| Recuperación de conocimiento | Recupera casos en español desde archivos Markdown por coincidencia lexical. | No usa embeddings ni toma precios/stock del manual; sus identificadores se validan en PostgreSQL. |
 
 El grafo conserva `messages` y los datos de trabajo estructurados en el estado de
 LangGraph. Para la primera versión se utiliza memoria de proceso ligada a un
@@ -73,13 +73,16 @@ identidad, sin copiar ni eliminar filas. No debe repetirse en una base ya migrad
    solicitar que el cliente use un email registrado; no crear ni modificar usuarios.
 2. Consultar repuestos activos por `code` o coincidencia acotada de nombre, usando
    parámetros enlazados. Nunca ejecutar SQL generado por el modelo.
-3. Recuperar guías RAG simuladas pertinentes. Las guías pueden sugerir causas,
-   repuestos y horas, pero no prueban una falla ni definen precios reales.
-4. Consultar inventario activo por código/nombre usando parámetros enlazados. Si
-   no existe un resultado único o falta stock, informar y no escribir ticket ni
-   cotización.
+3. Recuperar casos de los archivos Markdown en `docs/knowledge_base/`. El manual
+   aporta causas, recomendaciones técnicas e identificadores candidatos; no prueba
+   una falla ni define precios o stock. En sus componentes, `y` indica artículos
+   requeridos y `o` alternativas de las que se debe elegir una.
+4. Resolver cada identificador como código o nombre de un artículo/servicio activo
+   en `spare_parts`, mediante parámetros enlazados. Si no hay resultado único,
+   stock suficiente o precio positivo, informar y no cotizar.
 5. Presentar al cliente diagnóstico y cálculo indicativos, diferenciando horas
-   estimadas, precio real de inventario y material RAG simulado. No persistir aún.
+   estimadas y precio real de inventario. No persistir aún; no generar cotizaciones
+   con materiales en cero.
 6. Solo tras una respuesta afirmativa inequívoca, revalidar stock y precio. Si
    cambió cualquiera de esos valores, recalcular y pedir una nueva confirmación.
 7. Con datos todavía válidos, crear `tickets` en `IN_DIAGNOSIS`, `quotes` en
@@ -90,6 +93,17 @@ identidad, sin copiar ni eliminar filas. No debe repetirse en una base ya migrad
 No se crean registros de conversación ni se alteran ENUMs/tablas en este alcance.
 El `technician_id` es nullable según el esquema y queda vacío mientras no haya un
 usuario técnico asignado.
+
+## Conocimiento RAG Markdown
+
+El recuperador carga casos desde los archivos `.md` de
+`docs/knowledge_base/`. Cada caso contiene `Diagnóstico`, `Solución` y
+`Componente/Servicio` como campos estructurados; `Palabras clave` es opcional.
+Los códigos van entre acentos graves, `y` representa componentes requeridos y `o`
+representa alternativas. Los servicios también deben existir en `spare_parts` como
+artículos activos con stock y precio positivo. El manual nunca provee precios:
+todos los importes salen de PostgreSQL. Las guías técnicas son contexto interno
+para el agente y no se convierten en pasos de reparación física para el cliente.
 
 ## Componentes de aplicación
 

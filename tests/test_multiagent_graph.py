@@ -3,6 +3,7 @@ from dataclasses import replace
 from decimal import Decimal
 
 from app.agents.graph import build_multiagent_graph, calculate_quote
+from app.agents.retriever import MarkdownKnowledgeRetriever
 from app.agents.schemas import (
     IntakeDecision,
     PartRequest,
@@ -44,11 +45,13 @@ class FakeStructuredResponse:
 
 
 class FakeRepository:
-    def __init__(self, *, customer=True, stock=10) -> None:
+    def __init__(self, *, customer=True, stock=10, unit_price=Decimal("10.25")) -> None:
         self.customer = (
             {"id": 12, "name": "Ana", "last_name": "Prueba"} if customer else None
         )
         self.stock = stock
+        self.unit_price = unit_price
+        self.lookups = []
         self.created_ticket = None
         self.saved_quote = None
 
@@ -66,13 +69,14 @@ class FakeRepository:
         return 84, 91
 
     def find_spare_parts(self, search_term):
-        del search_term
+        self.lookups.append(search_term)
+        part_id = 7 if search_term == "Pasta_Termica" else 8
         return [
             {
-                "id": 7,
-                "code": "FAN-01",
-                "name": "Ventilador interno",
-                "unit_price": Decimal("10.25"),
+                "id": part_id,
+                "code": search_term,
+                "name": search_term.replace("_", " "),
+                "unit_price": self.unit_price,
                 "current_stock": self.stock,
             }
         ]
@@ -117,21 +121,29 @@ def make_model(
         or IntakeDecision(
             route="service",
             request_type="REPAIR",
-            title="Laptop se apaga",
-            failure_description="Se calienta y se apaga.",
+            title="Laptop se calienta",
+            failure_description="El ventilador suena fuerte y la temperatura es alta.",
         ),
         diagnosis=diagnosis
         or TechnicalDiagnosis(
             provisional_diagnosis="Posible falla de ventilación.",
             estimated_labor_hours=Decimal("1.50"),
-            required_parts=[PartRequest(search_term="Ventilador interno", quantity=2)],
+            required_parts=[
+                PartRequest(search_term="Pasta_Termica", quantity=1),
+                PartRequest(search_term="Ventilador_CPU", quantity=1),
+            ],
         ),
         confirmation=confirmation
         or QuoteConfirmation(decision="confirm"),
     )
 
 
-def invoke(graph, message="Mi laptop se calienta y se apaga.", *, initial=True):
+def invoke(
+    graph,
+    message="Mi laptop se calienta y el ventilador suena fuerte.",
+    *,
+    initial=True,
+):
     values = {
         "messages": [{"role": "user", "content": message}],
     }
@@ -217,6 +229,27 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(quote["total_amount"], Decimal("140.50"))
         self.assertEqual(quote["parts"][0]["subtotal"], Decimal("20.50"))
 
+    def test_quote_rejects_missing_or_zero_price_parts(self):
+        with self.assertRaisesRegex(ValueError, "sin artículos"):
+            calculate_quote(
+                labor_hours=Decimal("1.00"),
+                labor_hourly_rate=Decimal("80.00"),
+                parts=[],
+            )
+
+        with self.assertRaisesRegex(ValueError, "precio positivos"):
+            calculate_quote(
+                labor_hours=Decimal("1.00"),
+                labor_hourly_rate=Decimal("80.00"),
+                parts=[
+                    {
+                        "id": 7,
+                        "quantity": 1,
+                        "unit_price": Decimal("0"),
+                    }
+                ],
+            )
+
     def test_suggests_rag_diagnosis_without_persisting_before_confirmation(self):
         repository = FakeRepository()
         graph = build_multiagent_graph(
@@ -233,9 +266,14 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertIsNone(repository.saved_quote)
         self.assertEqual(
             [document["id"] for document in result["rag_documents"]],
-            ["CASE-LAPTOP-OVERHEAT-01"],
+            ["manual_servicio:007"],
+        )
+        self.assertEqual(
+            repository.lookups,
+            ["Pasta_Termica", "Ventilador_CPU"],
         )
         self.assertIn("Total indicativo calculado: 140.50", result["messages"][-1].content)
+        self.assertIn("Orientación técnica preliminar", result["messages"][-1].content)
 
     def test_confirmation_persists_ticket_and_quote_atomically(self):
         repository = FakeRepository()
@@ -334,7 +372,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertIn("¿Confirmas", result["messages"][-1].content)
 
     def test_stock_shortage_does_not_persist_ticket_or_quote(self):
-        repository = FakeRepository(stock=1)
+        repository = FakeRepository(stock=0)
         graph = build_multiagent_graph(
             settings=make_settings(),
             repository=repository,
@@ -347,6 +385,103 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertIsNone(repository.created_ticket)
         self.assertIsNone(repository.saved_quote)
         self.assertIn("stock actual es insuficiente", result["messages"][-1].content)
+
+    def test_zero_catalog_price_does_not_produce_or_persist_a_quote(self):
+        repository = FakeRepository(unit_price=Decimal("0.00"))
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(),
+        )
+
+        result = invoke(graph)
+
+        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertIn("precio positivo", result["messages"][-1].content)
+
+    def test_no_identified_parts_cannot_generate_a_zero_material_quote(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="Requiere revisión técnica.",
+                    estimated_labor_hours=Decimal("1.00"),
+                    required_parts=[],
+                )
+            ),
+            retriever=MarkdownKnowledgeRetriever(documents=()),
+        )
+
+        result = invoke(graph)
+
+        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertEqual(repository.lookups, [])
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertIn("materiales en cero", result["messages"][-1].content)
+
+    def test_unresolved_manual_alternatives_do_not_create_a_quote(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="REPAIR",
+                    title="PC se apaga poco después de encender",
+                    failure_description="Se apaga dos segundos después de encender.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="Posible fallo de alimentación.",
+                    estimated_labor_hours=Decimal("1.00"),
+                    required_parts=[],
+                ),
+            ),
+        )
+
+        result = invoke(graph, "La PC se apaga al encender.")
+
+        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertEqual(repository.lookups, [])
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertIn("alternativas", result["messages"][-1].content)
+
+    def test_selected_manual_alternative_is_the_only_catalog_item_quoted(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="REPAIR",
+                    title="PC se apaga poco después de encender",
+                    failure_description="Se apaga dos segundos después de encender.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="Posible fallo de fuente.",
+                    estimated_labor_hours=Decimal("1.00"),
+                    required_parts=[
+                        PartRequest(search_term="Fuente_Poder", quantity=1)
+                    ],
+                ),
+            ),
+        )
+
+        result = invoke(graph, "La PC se apaga al encender.")
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertEqual(repository.lookups, ["Fuente_Poder"])
+        self.assertEqual(
+            [part["code"] for part in result["quote"]["parts"]],
+            ["Fuente_Poder"],
+        )
 
     def test_requires_customer_record_before_creating_ticket(self):
         repository = FakeRepository(customer=False)

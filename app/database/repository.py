@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from decimal import Decimal
+import re
 from typing import Any
 
 from sqlalchemy import text
@@ -84,6 +85,12 @@ class ServiceRepository:
 
     def find_spare_parts(self, search_term: str) -> list[dict[str, Any]]:
         term = search_term.strip()
+        normalized_name = re.sub(r"_+", " ", term).strip()
+        escaped_name = (
+            normalized_name.replace("!", "!!")
+            .replace("%", "!%")
+            .replace("_", "!_")
+        )
         query = text(
             """
             SELECT id, code, name, unit_price, current_stock
@@ -91,16 +98,27 @@ class ServiceRepository:
             WHERE active IS TRUE
               AND (
                     LOWER(code) = LOWER(:term)
-                    OR name ILIKE :pattern
+                    OR LOWER(name) = LOWER(:normalized_name)
+                    OR name ILIKE :pattern ESCAPE '!'
               )
-            ORDER BY CASE WHEN LOWER(code) = LOWER(:term) THEN 0 ELSE 1 END, name
+            ORDER BY
+                CASE
+                    WHEN LOWER(code) = LOWER(:term) THEN 0
+                    WHEN LOWER(name) = LOWER(:normalized_name) THEN 1
+                    ELSE 2
+                END,
+                name
             LIMIT 5
             """
         )
         with self._session_factory() as session:
             rows = session.execute(
                 query,
-                {"term": term, "pattern": f"%{term}%"},
+                {
+                    "term": term,
+                    "normalized_name": normalized_name,
+                    "pattern": f"%{escaped_name}%",
+                },
             ).mappings()
             return [dict(row) for row in rows]
 

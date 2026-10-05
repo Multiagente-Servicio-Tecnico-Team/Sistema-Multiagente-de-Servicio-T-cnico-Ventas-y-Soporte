@@ -19,7 +19,7 @@ flowchart TD
 
     Supervisor -->|Faltan datos| Aclaracion["Solicitar aclaración"]
     Supervisor -->|Consulta general| Informacion["Respuesta informativa"]
-    Supervisor -->|Falla técnica| RAG["Recuperación RAG local"]
+    Supervisor -->|Falla técnica| RAG["Recuperación de manuales Markdown"]
 
     subgraph Especialistas["Agentes y servicios especializados"]
         direction TD
@@ -50,9 +50,9 @@ flowchart TD
 | Agente / componente | Función |
 | --- | --- |
 | Supervisor de atención | Clasifica la intención, extrae la solicitud, solicita aclaraciones y procesa la confirmación o rechazo de la propuesta. |
-| Recuperación de conocimiento | Recupera guías sintéticas relevantes mediante búsqueda lexical local. |
-| Soporte técnico | Genera diagnóstico provisional, horas estimadas y repuestos sugeridos en una salida estructurada. |
-| Almacén y logística | Consulta productos activos, precio y stock mediante consultas parametrizadas en PostgreSQL. |
+| Recuperación de conocimiento | Busca casos en los archivos `.md` de `docs/knowledge_base/` y entrega el diagnóstico, la guía técnica y referencias del catálogo al agente técnico. |
+| Soporte técnico | Genera diagnóstico provisional y horas estimadas; restringe la selección a identificadores del manual cuando hay casos coincidentes. |
+| Almacén y logística | Resuelve identificadores contra el código/nombre del catálogo PostgreSQL y valida precio positivo y stock mediante consultas parametrizadas. |
 | Ventas | Calcula mano de obra y repuestos con `Decimal`, usando la tarifa configurada y los precios actuales de la base. |
 | Persistencia | Guarda ticket, cotización, detalles y actualización de estado en una única transacción. |
 
@@ -65,10 +65,13 @@ guarda una cotización desactualizada.
 
 1. El cliente envía su email registrado y describe el equipo y la falla.
 2. El supervisor verifica que exista un cliente activo con rol `CUSTOMER`.
-3. La recuperación local busca casos sintéticos de sobrecalentamiento,
-   almacenamiento, memoria o batería.
-4. El agente técnico presenta un diagnóstico provisional y sugiere horas/repuestos.
-5. Almacén consulta los precios y existencias vigentes; ventas calcula la propuesta.
+3. La recuperación busca síntomas en los casos Markdown y aporta guías técnicas y
+   códigos candidatos; `y` requiere los artículos indicados y `o` obliga a elegir
+   exactamente una alternativa.
+4. El agente técnico presenta un diagnóstico provisional, una orientación técnica
+   preliminar y estima las horas de mano de obra.
+5. Almacén resuelve cada candidato en PostgreSQL y valida precio positivo y stock;
+   ventas calcula la propuesta.
 6. El chat presenta la propuesta sin crear registros en PostgreSQL.
 7. Si el cliente confirma, se vuelve a comprobar inventario y precio. Si cambió la
    propuesta, se muestran los importes actualizados y se solicita confirmación otra
@@ -76,9 +79,34 @@ guarda una cotización desactualizada.
 8. Con una confirmación vigente se guardan ticket, cotización y detalles dentro de
    una transacción. Una respuesta negativa no genera escrituras.
 
-Las guías RAG son demostrativas. Sus rangos de coste en UM no se usan en el cálculo
-comercial; los totales se calculan con `LABOR_HOURLY_RATE` y los precios de
-PostgreSQL.
+## Base de conocimiento Markdown
+
+El recuperador lee recursivamente archivos `.md` dentro de
+[`docs/knowledge_base/`](docs/knowledge_base/). Cada caso debe declarar
+`Diagnóstico`, `Solución` y `Componente/Servicio`; se recomienda añadir
+`Palabras clave`. Escribe los identificadores de catálogo entre acentos graves y
+usa `y` cuando deben consultarse todos o `o` cuando son alternativas:
+
+```markdown
+- **Caso 10: Ejemplo de incidencia**
+  - **Diagnóstico**: Causa posible que debe verificarse.
+  - **Solución**: Referencia técnica para revisar y corregir la incidencia.
+  - **Componente/Servicio**: `Servicio_Diagnostico` o `REP-EJEMPLO`.
+  - **Palabras clave**: síntoma, equipo, incidencia
+```
+
+Cada identificador se busca como código o como parte del nombre en
+`spare_parts`. Registra también los servicios como artículos activos del catálogo
+con stock suficiente y un precio positivo. El Markdown no crea ni modifica
+registros de PostgreSQL, no es fuente de precios y no sustituye la validación de
+compatibilidad, inventario y tarifa. Si falta el mapeo del catálogo, no se genera
+una cotización.
+
+Los manuales Markdown no contienen tarifas: aportan conocimiento técnico y
+referencias del catálogo. Los totales se calculan exclusivamente con
+`LABOR_HOURLY_RATE` y precios positivos vigentes de PostgreSQL. Si no se reconoce
+un artículo/servicio, hay ambigüedad, falta stock o el precio es cero, el agente no
+propone ni guarda una cotización.
 
 ## Tecnologías
 
@@ -97,7 +125,7 @@ PostgreSQL.
 app/
 ├── agents/
 │   ├── graph.py             # Grafo jerárquico y flujo de agentes
-│   ├── retriever.py         # Recuperación lexical local
+│   ├── retriever.py         # Recuperación lexical de manuales Markdown
 │   └── schemas.py           # Contratos estructurados
 ├── database/
 │   ├── connection.py        # Conexión SQLAlchemy
@@ -108,7 +136,7 @@ app/
 └── settings.py              # Configuración desde entorno
 docs/
 └── knowledge_base/
-    └── simulated_cases.json # Guías sintéticas RAG
+    └── manual_servicio.md   # Casos y referencias editables del catálogo
 sql/
 └── migrate_spanish_schema_to_english.sql
 tests/

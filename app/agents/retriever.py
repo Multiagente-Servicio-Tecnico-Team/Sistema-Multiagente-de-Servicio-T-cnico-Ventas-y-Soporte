@@ -1,18 +1,22 @@
-import json
 import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-KNOWLEDGE_BASE_PATH = (
-    Path(__file__).parents[2]
-    / "docs"
-    / "knowledge_base"
-    / "simulated_cases.json"
+KNOWLEDGE_BASE_PATH = Path(__file__).parents[2] / "docs" / "knowledge_base"
+_CASE_PATTERN = re.compile(
+    r"(?m)^\s*(?:[-*]\s*)?\*\*Caso\s+(\d+):\s*(.*?)\*\*\s*$"
+    r"|^\s*#{2,4}\s+Caso\s+(\d+):\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+_FIELD_PATTERN = re.compile(
+    r"(?im)^\s*[-*]?\s*\*\*"
+    r"(Diagn[oó]stico|Soluci[oó]n|Componente\s*/\s*Servicio|Palabras\s+clave)"
+    r"\*\*\s*:\s*(.*?)\s*$"
 )
 _GENERIC_TERMS = {
     "ademas",
@@ -65,31 +69,19 @@ _GENERIC_TERMS = {
 }
 
 
-class SuggestedPart(BaseModel):
-    code: str = Field(min_length=1, max_length=50)
-    quantity: int = Field(ge=1, le=100)
-    reason: str = Field(min_length=1, max_length=500)
-
-
-class LaborHoursRange(BaseModel):
-    minimum: float = Field(ge=0, le=100)
-    maximum: float = Field(ge=0, le=100)
-
-
-class SimulatedCostRange(BaseModel):
-    minimum: float = Field(ge=0)
-    maximum: float = Field(ge=0)
+class CatalogItem(BaseModel):
+    identifier: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class KnowledgeDocument(BaseModel):
     id: str
     title: str
     keywords: list[str]
-    likely_errors: list[str]
-    recommended_parts: list[SuggestedPart]
-    estimated_labor_hours: LaborHoursRange
-    simulated_reference_cost_um: SimulatedCostRange
-    diagnostic_notes: str
+    diagnosis: str
+    solution: str
+    recommended_parts: list[CatalogItem]
+    selection_mode: Literal["all", "one"]
 
 
 def _normalize(value: str) -> str:
@@ -108,28 +100,112 @@ def _terms(value: str) -> set[str]:
     }
 
 
-@lru_cache(maxsize=1)
-def load_knowledge_documents() -> tuple[KnowledgeDocument, ...]:
-    if not KNOWLEDGE_BASE_PATH.is_file():
-        raise FileNotFoundError(
-            f"No se encontró la base RAG simulada: {KNOWLEDGE_BASE_PATH}"
+def _parse_case(
+    *,
+    source: Path,
+    number: str,
+    title: str,
+    content: str,
+) -> KnowledgeDocument:
+    fields: dict[str, str] = {}
+    for match in _FIELD_PATTERN.finditer(content):
+        label = _normalize(match.group(1))
+        fields[label] = match.group(2).strip()
+
+    diagnosis = fields.get("diagnostico", "")
+    solution = fields.get("solucion", "")
+    components = fields.get("componente servicio", "")
+    if not diagnosis or not solution or not components:
+        raise ValueError(
+            f"El caso {number} de {source} debe incluir Diagnóstico, "
+            "Solución y Componente/Servicio."
         )
-    raw = json.loads(KNOWLEDGE_BASE_PATH.read_text(encoding="utf-8"))
-    documents = tuple(
-        KnowledgeDocument.model_validate(item)
-        for item in raw["documents"]
+
+    identifiers = re.findall(r"`([^`]+)`", components)
+    if not identifiers:
+        raise ValueError(
+            f"El caso {number} de {source} debe escribir los códigos de "
+            "Componente/Servicio entre acentos graves (`código`)."
+        )
+
+    reason = re.sub(r"\s+", " ", diagnosis).strip()
+    items = [
+        CatalogItem(identifier=identifier.strip(), reason=reason)
+        for identifier in identifiers
+    ]
+    explicit_keywords = fields.get("palabras clave", "")
+    keywords = [
+        value.strip()
+        for value in re.split(r"[,;]", explicit_keywords)
+        if value.strip()
+    ]
+    keywords.extend([title, diagnosis, solution])
+
+    return KnowledgeDocument(
+        id=f"{source.stem}:{int(number):03d}",
+        title=title.strip(),
+        keywords=keywords,
+        diagnosis=diagnosis,
+        solution=solution,
+        recommended_parts=items,
+        selection_mode=(
+            "one"
+            if re.search(r"\s+o\s+", components, re.IGNORECASE)
+            else "all"
+        ),
     )
-    if not documents:
-        raise ValueError("La base RAG simulada no contiene documentos.")
+
+
+def _load_markdown_file(path: Path) -> list[KnowledgeDocument]:
+    content = path.read_text(encoding="utf-8")
+    matches = list(_CASE_PATTERN.finditer(content))
+    documents = []
+    for index, match in enumerate(matches):
+        number = match.group(1) or match.group(3)
+        title = match.group(2) or match.group(4)
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        documents.append(
+            _parse_case(
+                source=path,
+                number=number,
+                title=title,
+                content=content[start:end],
+            )
+        )
     return documents
 
 
-class SimulatedKnowledgeRetriever:
+@lru_cache(maxsize=1)
+def load_knowledge_documents() -> tuple[KnowledgeDocument, ...]:
+    if not KNOWLEDGE_BASE_PATH.is_dir():
+        raise FileNotFoundError(
+            f"No se encontró el directorio de conocimiento Markdown: "
+            f"{KNOWLEDGE_BASE_PATH}"
+        )
+
+    paths = sorted(KNOWLEDGE_BASE_PATH.rglob("*.md"))
+    documents = tuple(
+        document
+        for path in paths
+        for document in _load_markdown_file(path)
+    )
+    if not documents:
+        raise ValueError(
+            f"No se encontraron casos estructurados en archivos Markdown de "
+            f"{KNOWLEDGE_BASE_PATH}."
+        )
+    return documents
+
+
+class MarkdownKnowledgeRetriever:
     def __init__(
         self,
         documents: tuple[KnowledgeDocument, ...] | None = None,
     ) -> None:
-        self._documents = documents or load_knowledge_documents()
+        self._documents = (
+            load_knowledge_documents() if documents is None else documents
+        )
 
     def retrieve(self, query: str, *, limit: int = 3) -> list[KnowledgeDocument]:
         if limit < 1:
@@ -142,9 +218,7 @@ class SimulatedKnowledgeRetriever:
         for document in self._documents:
             keyword_terms = _terms(" ".join(document.keywords))
             title_terms = _terms(document.title)
-            diagnostic_terms = _terms(
-                " ".join(document.likely_errors) + " " + document.diagnostic_notes
-            )
+            diagnostic_terms = _terms(document.diagnosis)
             score = (
                 4 * len(query_terms & keyword_terms)
                 + 2 * len(query_terms & title_terms)
@@ -154,45 +228,52 @@ class SimulatedKnowledgeRetriever:
                 ranked.append((score, document))
 
         ranked.sort(key=lambda match: (-match[0], match[1].id))
-        return [document for _, document in ranked[:limit]]
+        if not ranked:
+            return []
+        relevance_threshold = (ranked[0][0] * 3 + 3) // 4
+        relevant_documents = [
+            document
+            for score, document in ranked
+            if score >= relevance_threshold
+        ]
+        return relevant_documents[:limit]
 
     @staticmethod
     def format_context(documents: list[KnowledgeDocument]) -> str:
         if not documents:
             return (
-                "No se encontraron casos simulados pertinentes. Formula una "
-                "evaluación prudente usando solo los síntomas proporcionados."
+                "No se encontraron casos pertinentes en los manuales Markdown. "
+                "Formula una evaluación prudente usando solo los síntomas."
             )
         cases: list[str] = []
         for document in documents:
             part_lines = [
-                f"- {part.code} x {part.quantity}: {part.reason}"
+                f"- `{part.identifier}`: {part.reason}"
                 for part in document.recommended_parts
-            ] or ["- No hay un repuesto específico sugerido por esta guía."]
+            ]
+            selection = (
+                "Selecciona exactamente uno de los identificadores."
+                if document.selection_mode == "one"
+                else "Se requieren todos los identificadores listados."
+            )
             cases.append(
                 "\n".join(
                     [
-                        f"Documento {document.id}: {document.title}",
-                        f"Errores posibles (no confirmados): "
-                        f"{'; '.join(document.likely_errors)}",
-                        "Repuestos de referencia:",
+                        f"Caso {document.id}: {document.title}",
+                        f"Diagnóstico posible (no confirmado): {document.diagnosis}",
+                        f"Guía técnica: {document.solution}",
+                        "Artículos/servicios candidatos del catálogo PostgreSQL:",
                         *part_lines,
-                        (
-                            "Horas orientativas: "
-                            f"{document.estimated_labor_hours.minimum:g}-"
-                            f"{document.estimated_labor_hours.maximum:g}"
-                        ),
-                        (
-                            "Rango de coste SIMULADO: "
-                            f"{document.simulated_reference_cost_um.minimum:.2f}-"
-                            f"{document.simulated_reference_cost_um.maximum:.2f} UM; "
-                            "no es un precio real ni se debe guardar en la cotización."
-                        ),
-                        f"Nota: {document.diagnostic_notes}",
+                        selection,
                     ]
                 )
             )
-        return "\n\n".join(cases)
+        return (
+            "\n\n".join(cases)
+            + "\n\nLos manuales no definen precios ni stock. Usa únicamente el "
+            "catálogo PostgreSQL; si no hay coincidencia inequívoca, stock o "
+            "precio mayor que cero, no emitas una cotización."
+        )
 
     @staticmethod
     def as_state(documents: list[KnowledgeDocument]) -> list[dict[str, Any]]:

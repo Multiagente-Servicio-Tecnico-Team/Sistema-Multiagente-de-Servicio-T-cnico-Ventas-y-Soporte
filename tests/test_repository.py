@@ -86,6 +86,38 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn(":email", query)
         self.assertEqual(parameters, {"email": "ANA@example.com"})
 
+    def test_spare_part_lookup_matches_catalog_names_with_underscore_identifiers(self):
+        session = FakeSession(
+            [
+                FakeResult(
+                    rows=[
+                        {
+                            "id": 3,
+                            "code": "SVC-001",
+                            "name": "Servicio Mantenimiento Contactos",
+                        }
+                    ]
+                )
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        parts = repository.find_spare_parts("Servicio_Mantenimiento_Contactos")
+
+        self.assertEqual(parts[0]["id"], 3)
+        query, parameters = session.calls[0]
+        self.assertIn("LOWER(code) = LOWER(:term)", query)
+        self.assertIn("LOWER(name) = LOWER(:normalized_name)", query)
+        self.assertIn("ILIKE :pattern ESCAPE '!'", query)
+        self.assertEqual(
+            parameters["normalized_name"],
+            "Servicio Mantenimiento Contactos",
+        )
+        self.assertEqual(
+            parameters["pattern"],
+            "%Servicio Mantenimiento Contactos%",
+        )
+
     def test_ticket_insert_uses_parameters_and_starts_in_diagnosis(self):
         session = FakeSession([FakeResult(scalar=55)])
         repository = ServiceRepository(lambda: session)
