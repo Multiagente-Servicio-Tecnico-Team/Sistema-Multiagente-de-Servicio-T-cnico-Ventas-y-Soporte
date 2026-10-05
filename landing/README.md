@@ -102,7 +102,7 @@ VITE_API_URL=http://localhost:8000
 npm --prefix landing test
 ```
 
-45 pruebas en 5 archivos: contrato de los endpoints de cuentas, errores 401/409/410/5xx y de red, validación de
+56 pruebas en 6 archivos: contrato de los endpoints de cuentas, errores 401/409/410/5xx y de red, validación de
 registro, acceso, recuperación y restablecimiento, roles, cierre de sesión, sesión sin contraseñas,
 redirecciones y consulta nueva.
 
@@ -125,4 +125,18 @@ Genera `landing/dist/` (HTML, CSS y JS estáticos). Para publicarlo:
 
 - En modo demostración (sin `VITE_API_URL`) no se verifican contraseñas ni se persisten datos al recargar.
 - Tickets, inventario y asistente usan datos de demostración en memoria.
-- El asistente responde con textos fijos; aún no está conectado a los agentes LangGraph del backend.
+- Sin `VITE_CHAT_URL` el asistente responde con textos de demostración. Con `VITE_CHAT_URL` usa el patrón
+  LangGraph configurado (contrato en `app/chat/README.md`); la conversación vive en la pestaña y recargar
+  empieza una nueva.
+
+## Chat con los agentes
+
+`/portal/asistente` envía `POST /api/chat` a `VITE_CHAT_URL` con la cookie del inicio de sesión: el cliente no
+escribe su correo y el servidor lo identifica por la sesión. Muestra la respuesta del agente, la tarjeta de
+presupuesto (aceptar o rechazar) y el ticket creado. Si la sesión terminó lleva al acceso y vuelve al chat; ante
+errores temporales ofrece reintentar. Para probarlo con el patrón de referencia:
+
+```bash
+VITE_API_URL=http://localhost:8000
+VITE_CHAT_URL=http://localhost:8001
+```

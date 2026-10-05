@@ -4,6 +4,8 @@ import {
   Archive, Bot, Brain, CircleCheck, Clock, Cpu, Info, PhoneCall, ReceiptText, SendHorizontal, Ticket, UserRound, Wrench,
 } from "lucide-react";
 import { formatPEN, useStore } from "../../data/store.jsx";
+import { chatApi } from "../../api/chat.js";
+import LiveChat from "./LiveChat.jsx";
 
 /*
  * Dos modos:
@@ -288,8 +290,10 @@ function Chat({ ticketId }) {
 }
 
 /** Reinicia la conversación al cambiar entre consulta nueva y un ticket existente. */
-export default function Assistant() {
+export default function Assistant({ api = chatApi }) {
   const [params] = useSearchParams();
   const ticketId = params.get("ticket");
+  // Con VITE_CHAT_URL, la consulta nueva va al patrón LangGraph con la sesión del inicio de sesión.
+  if (!ticketId && api.mode === "api") return <LiveChat api={api} />;
   return <Chat key={ticketId || "nueva"} ticketId={ticketId} />;
 }
