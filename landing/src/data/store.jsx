@@ -117,6 +117,25 @@ function reducer(state, action) {
         ...state,
         staffTickets: state.staffTickets.map((t) => (t.id === action.id ? { ...t, ...action.changes } : t)),
       };
+    case "createConsultation": {
+      // Consulta nueva desde el chat: crea el ticket del cliente y lo envía a la cola del taller.
+      const ids = [...state.staffTickets, ...state.clientTickets].map((t) => Number(t.id.split("-")[1]));
+      const id = action.id || `TCK-${Math.max(...ids) + 1}`;
+      const { summary, client } = action;
+      const device = action.device || "Equipo por confirmar";
+      return {
+        ...state,
+        lastConsultation: id,
+        clientTickets: [
+          { id, when: "Hoy", kind: "Consulta", device, icon: "laptop", summary, status: "received", lines: [], total: null },
+          ...state.clientTickets,
+        ],
+        staffTickets: [
+          { id, date: today(), client: client.name, phone: "Por confirmar", email: client.email, device, issue: summary, category: "Reparación", budget: null, status: "Nuevo", origin: "Bot", payment: "Pendiente", advance: null, method: null },
+          ...state.staffTickets,
+        ],
+      };
+    }
     case "approveBudget":
       return {
         ...state,

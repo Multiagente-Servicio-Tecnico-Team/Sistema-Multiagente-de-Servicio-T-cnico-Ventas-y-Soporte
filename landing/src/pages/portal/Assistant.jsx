@@ -1,38 +1,43 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
-  Archive, Bot, Brain, CircleCheck, Clock, Cpu, Info, PhoneCall, ReceiptText, SendHorizontal, UserRound, Wrench,
+  Archive, Bot, Brain, CircleCheck, Clock, Cpu, Info, PhoneCall, ReceiptText, SendHorizontal, Ticket, UserRound, Wrench,
 } from "lucide-react";
 import { formatPEN, useStore } from "../../data/store.jsx";
 
-const TICKET_ID = "TCK-2041";
+/*
+ * Dos modos:
+ * - /portal/asistente               → consulta nueva: pide equipo y falla y crea un ticket (cliente + cola del taller).
+ * - /portal/asistente?ticket=TCK-…  → conversación de un ticket existente con su presupuesto (diseño de Figma).
+ * Las respuestas son textos fijos de demostración; no hay modelo conectado.
+ */
 
-const suggestions = [
+const ticketSuggestions = [
   {
     icon: Archive,
     label: "Consultar estado de stock",
-    reply: "La unidad SSD NVMe 1TB Samsung 980 de tu presupuesto está reservada para el ticket #TCK-2041 en el inventario del taller. No se liberará mientras el presupuesto esté vigente.",
+    reply: (id) => `Los repuestos de tu presupuesto están reservados para el ticket #${id} en el inventario del taller. No se liberarán mientras el presupuesto esté vigente.`,
   },
   {
     icon: PhoneCall,
     label: "Pedir llamada técnica",
-    reply: "Registré tu solicitud de llamada. Un técnico se comunicará al número asociado a tu cuenta dentro del horario de atención del taller.",
+    reply: () => "Registré tu solicitud de llamada. Un técnico se comunicará al número asociado a tu cuenta dentro del horario de atención del taller.",
   },
   {
     icon: Clock,
     label: "¿Cuánto tardará el respaldo de datos?",
-    reply: "El tiempo de respaldo depende del estado real de la unidad. El técnico lo confirmará tras la prueba de lectura; no te daré un plazo sin esa validación.",
+    reply: () => "El tiempo de respaldo depende del estado real de la unidad. El técnico lo confirmará tras la prueba de lectura; no te daré un plazo sin esa validación.",
   },
 ];
 
-const FALLBACK =
-  "Recibí tu consulta y la añadí al expediente del ticket #TCK-2041. Un especialista la revisará y te responderá por este canal.";
+const ticketFallback = (id) => `Recibí tu consulta y la añadí al expediente del ticket #${id}. Un especialista la revisará y te responderá por este canal.`;
 
 function now() {
   return new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
 }
 
-const initialMessages = [
+// Conversación del diseño de Figma para el ticket con presupuesto detallado.
+const figmaConversation = [
   {
     id: 1,
     from: "user",
@@ -87,40 +92,97 @@ function BudgetCard({ ticket, onApprove }) {
   );
 }
 
-export default function Assistant() {
-  const { clientTickets, dispatch } = useStore();
-  const ticket = clientTickets.find((t) => t.id === TICKET_ID);
-  const [messages, setMessages] = useState(initialMessages);
+function CreatedCard({ id }) {
+  return (
+    <div className="created">
+      <span className="icon-tile icon-tile--sm"><Ticket size={18} aria-hidden="true" /></span>
+      <div>
+        <strong>Ticket #{id} registrado</strong>
+        <p>Estado: Recibido · En triage. Presupuesto pendiente de validación técnica.</p>
+      </div>
+      <Link to="/portal/tickets" className="btn btn--soft btn--sm">Ver en Mis Tickets</Link>
+    </div>
+  );
+}
+
+function Chat({ ticketId }) {
+  const { session, clientTickets, staffTickets, dispatch } = useStore();
+  const existing = ticketId ? clientTickets.find((t) => t.id === ticketId && t.lines.length > 0) : null;
+  const firstName = (session?.name || "").split(" ")[0];
+
+  const [messages, setMessages] = useState(() =>
+    existing
+      ? figmaConversation
+      : [{
+          id: 1,
+          from: "bot",
+          time: now(),
+          paragraphs: [
+            `Hola${firstName ? `, ${firstName}` : ""}. Soy el Agente de Diagnóstico de TechFix.AI.`,
+            "Para abrir tu consulta, cuéntame primero qué equipo necesitas revisar (tipo, marca y modelo).",
+          ],
+        }]
+  );
+  // Consulta nueva: "device" → "issue" → "done". Ticket existente: siempre "ticket".
+  const [step, setStep] = useState(existing ? "ticket" : "device");
+  const [device, setDevice] = useState("");
+  const [createdId, setCreatedId] = useState(null);
   const [draft, setDraft] = useState("");
   const [typing, setTyping] = useState(false);
   const endRef = useRef(null);
   const timer = useRef(null);
+
+  const currentId = existing?.id || createdId;
 
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [messages, typing]);
 
-  const reply = (text) => {
+  const reply = (paragraphs, extra = {}) => {
     setTyping(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       setTyping(false);
-      setMessages((m) => [...m, { id: Date.now() + 1, from: "bot", time: now(), paragraphs: [text] }]);
+      setMessages((m) => [...m, { id: Date.now() + 1, from: "bot", time: now(), paragraphs, ...extra }]);
     }, 700);
   };
 
-  const send = (text, answer = FALLBACK) => {
+  const addUser = (text) => setMessages((m) => [...m, { id: Date.now(), from: "user", time: now(), text }]);
+
+  const send = (text, answer) => {
     const clean = text.trim();
     if (!clean) return;
-    setMessages((m) => [...m, { id: Date.now(), from: "user", time: now(), text: clean }]);
+    addUser(clean);
     setDraft("");
-    reply(answer);
+
+    if (step === "device") {
+      setDevice(clean.slice(0, 80));
+      setStep("issue");
+      reply(["Gracias. Ahora describe la falla: qué ocurre, desde cuándo y si hubo golpes, líquidos o actualizaciones recientes."]);
+      return;
+    }
+    if (step === "issue") {
+      const ids = [...staffTickets, ...clientTickets].map((t) => Number(t.id.split("-")[1]));
+      const id = `TCK-${Math.max(...ids) + 1}`;
+      dispatch({ type: "createConsultation", id, device, summary: clean.slice(0, 280), client: { name: session?.name || "Cliente", email: session?.email || "" } });
+      setCreatedId(id);
+      setStep("done");
+      reply(
+        [
+          `Registré tu consulta como ticket #${id}.`,
+          "Un técnico validará el diagnóstico y te enviaré el presupuesto por aquí y en Mis Tickets. Ninguna reparación se inicia sin tu aprobación.",
+        ],
+        { created: id }
+      );
+      return;
+    }
+    reply([answer || ticketFallback(currentId)]);
   };
 
   const approve = () => {
-    dispatch({ type: "approveBudget", id: TICKET_ID });
-    reply("Listo. Registré tu aprobación con fecha y hora, y el taller ya inició la reparación. Puedes seguir el avance en Mis Tickets.");
+    dispatch({ type: "approveBudget", id: existing.id });
+    reply(["Listo. Registré tu aprobación con fecha y hora, y el taller ya inició la reparación. Puedes seguir el avance en Mis Tickets."]);
   };
 
   const onKey = (e) => {
@@ -130,10 +192,15 @@ export default function Assistant() {
     }
   };
 
+  const placeholder = {
+    device: "Ej.: Laptop Lenovo Legion 5 15ACH6",
+    issue: "Describe la falla con el mayor detalle posible…",
+  }[step] || "Escribe tu consulta sobre la reparación o consulta detalles del presupuesto...";
+
   return (
     <div className="container-chat">
       <div className="chat-title">
-        <h1>Diagnóstico Asistido y Cotización Inteligente</h1>
+        <h1>{existing ? "Diagnóstico Asistido y Cotización Inteligente" : "Nueva Consulta de Diagnóstico"}</h1>
         <span className="pill pill--green"><span className="pill__dot" />En línea</span>
       </div>
 
@@ -142,7 +209,7 @@ export default function Assistant() {
           <span className="copilot__avatar"><Bot size={22} aria-hidden="true" /></span>
           <div>
             <h2>TechFix Copilot</h2>
-            <p>Especialista en Diagnóstico y Presupuestos de Hardware · Ticket #{TICKET_ID}</p>
+            <p>Especialista en Diagnóstico y Presupuestos de Hardware{currentId ? ` · Ticket #${currentId}` : " · Nueva consulta"}</p>
           </div>
         </header>
 
@@ -164,7 +231,8 @@ export default function Assistant() {
                   <div className="msg__bubble">
                     {m.paragraphs.map((p) => <p key={p}>{p}</p>)}
                   </div>
-                  {m.budget && ticket && <BudgetCard ticket={ticket} onApprove={approve} />}
+                  {m.budget && existing && <BudgetCard ticket={existing} onApprove={approve} />}
+                  {m.created && <CreatedCard id={m.created} />}
                 </div>
               </div>
             )
@@ -179,14 +247,16 @@ export default function Assistant() {
         </div>
 
         <footer className="copilot__composer">
-          <div className="quick">
-            <span className="mono-label">Sugerencias rápidas:</span>
-            {suggestions.map(({ icon: Icon, label, reply: answer }) => (
-              <button key={label} type="button" className="quick__btn" onClick={() => send(label, answer)}>
-                <Icon size={15} aria-hidden="true" /> {label}
-              </button>
-            ))}
-          </div>
+          {existing && (
+            <div className="quick">
+              <span className="mono-label">Sugerencias rápidas:</span>
+              {ticketSuggestions.map(({ icon: Icon, label, reply: answer }) => (
+                <button key={label} type="button" className="quick__btn" onClick={() => send(label, answer(existing.id))}>
+                  <Icon size={15} aria-hidden="true" /> {label}
+                </button>
+              ))}
+            </div>
+          )}
           <form
             className="composer"
             onSubmit={(e) => {
@@ -197,7 +267,7 @@ export default function Assistant() {
             <textarea
               rows={1}
               className="composer__input"
-              placeholder="Escribe tu consulta sobre la reparación o consulta detalles del presupuesto..."
+              placeholder={placeholder}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKey}
@@ -215,4 +285,11 @@ export default function Assistant() {
       </section>
     </div>
   );
+}
+
+/** Reinicia la conversación al cambiar entre consulta nueva y un ticket existente. */
+export default function Assistant() {
+  const [params] = useSearchParams();
+  const ticketId = params.get("ticket");
+  return <Chat key={ticketId || "nueva"} ticketId={ticketId} />;
 }
