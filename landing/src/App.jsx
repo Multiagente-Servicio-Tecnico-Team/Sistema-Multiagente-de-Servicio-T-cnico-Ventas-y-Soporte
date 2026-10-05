@@ -5,6 +5,8 @@ import Landing from "./pages/Landing.jsx";
 import NotFound from "./pages/NotFound.jsx";
 import Login from "./pages/portal/Login.jsx";
 import Register from "./pages/portal/Register.jsx";
+import Recover from "./pages/portal/Recover.jsx";
+import Help from "./pages/Help.jsx";
 
 export default function App() {
   return (
@@ -16,6 +18,8 @@ export default function App() {
         <Route element={<AuthLayout />}>
           <Route path="/portal/acceso" element={<Login />} />
           <Route path="/portal/registro" element={<Register />} />
+          <Route path="/portal/recuperar" element={<Recover />} />
+          <Route path="/ayuda" element={<Help />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
