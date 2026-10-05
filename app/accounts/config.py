@@ -24,6 +24,11 @@ class Settings:
     max_failed_logins: int = 5
     lockout_seconds: int = 15 * 60
     cookie_name: str = field(default="techfix_session")
+    frontend_url: str = "http://localhost:5173"
+    mail_mode: str = "outbox"
+    reset_minutes: int = 15
+    outbox_dir: str = ".local/outbox"
+    max_reset_requests: int = 5
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -42,4 +47,8 @@ class Settings:
             secure_cookie=_bool(os.getenv("AUTH_SECURE_COOKIE"), True),
             frontend_origins=origins,
             bcrypt_rounds=max(4, min(rounds, 15)),
+            frontend_url=os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/"),
+            mail_mode="smtp" if os.getenv("MAIL_MODE", "outbox").strip().lower() == "smtp" else "outbox",
+            reset_minutes=max(5, min(int(os.getenv("RESET_TOKEN_MINUTES", "15")), 60)),
+            outbox_dir=os.getenv("OUTBOX_DIR", ".local/outbox"),
         )
