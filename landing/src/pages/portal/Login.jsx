@@ -3,7 +3,7 @@ import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, AtSign, Info, Lock, LoaderCircle, TriangleAlert } from "lucide-react";
 import { Field, InputIcon, PasswordInput } from "../../components/ui.jsx";
 import { EMAIL_RE, useStore } from "../../data/store.jsx";
-import { authApi as defaultApi, MESSAGES } from "../../api/auth.js";
+import { areaForRole, authApi as defaultApi, fullName, MESSAGES } from "../../api/auth.js";
 
 export function FormAlert({ children }) {
   if (!children) return null;
@@ -19,7 +19,7 @@ export function FormAlert({ children }) {
  * Llama a POST /login mediante el cliente de autenticación (o al simulador si no hay backend).
  */
 export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api = defaultApi }) {
-  const { session, login } = useStore();
+  const { session, login, logout } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState("");
@@ -45,8 +45,19 @@ export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api
     try {
       const usuario = await api.login({ email, password });
       setPassword("");
-      login({ role, email: usuario.email, name: usuario.nombre });
-      navigate(location.state?.from || defaultTo, { replace: true });
+      // El rol lo decide el servidor (tabla users); la pantalla solo indica el área esperada.
+      const area = areaForRole(usuario.rol, role);
+      if (role === "staff" && area === "client") {
+        // El servidor ya abrió sesión: se cierra en ambos lados para no dejar estados distintos.
+        await api.logout?.();
+        logout();
+        setFormError(MESSAGES.notStaff);
+        setLoading(false);
+        return;
+      }
+      login({ role: area, email: usuario.email, name: fullName(usuario) || usuario.email });
+      const target = area === role ? location.state?.from || defaultTo : "/taller";
+      navigate(target, { replace: true });
     } catch (err) {
       setFormError(err?.message || MESSAGES.unexpected);
       setLoading(false);

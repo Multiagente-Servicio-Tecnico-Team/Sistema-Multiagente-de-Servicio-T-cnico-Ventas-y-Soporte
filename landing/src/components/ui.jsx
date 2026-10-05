@@ -9,6 +9,13 @@ import { useStore } from "../data/store.jsx";
 /** Lleva al inicio en cada cambio de ruta, o al ancla indicada en el hash. */
 export function ScrollManager() {
   const { pathname, hash } = useLocation();
+  const { signedOut, dispatch } = useStore();
+
+  // Al llegar a la landing tras cerrar sesión, las rutas protegidas vuelven a pedir acceso.
+  useEffect(() => {
+    if (signedOut && pathname === "/") dispatch({ type: "clearSignedOut" });
+  }, [signedOut, pathname, dispatch]);
+
   useEffect(() => {
     if (hash) {
       const el = document.getElementById(hash.slice(1));
@@ -24,9 +31,11 @@ export function ScrollManager() {
 
 /** Protege rutas por rol; si no hay sesión, envía al acceso correspondiente. */
 export function RequireRole({ role, children }) {
-  const { session } = useStore();
+  const { session, signedOut } = useStore();
   const location = useLocation();
   if (session?.role === role) return children;
+  // Tras "Cerrar sesión" se vuelve a la landing en lugar de pedir acceso otra vez.
+  if (!session && signedOut) return <Navigate to="/" replace />;
   const to = role === "staff" ? "/taller/acceso" : "/portal/acceso";
   return <Navigate to={to} replace state={{ from: location.pathname }} />;
 }

@@ -86,6 +86,52 @@ describe("inicio de sesión", () => {
   });
 });
 
+describe("rol devuelto por el backend", () => {
+  function renderPage(page, api) {
+    const form = page === "staff"
+      ? <LoginForm role="staff" badge="" title="Taller" subtitle="" defaultTo="/taller" footer={null} api={api} />
+      : <LoginForm role="client" badge="" title="Portal" subtitle="" defaultTo="/portal/tickets" footer={null} api={api} />;
+    return render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={["/acceso"]}>
+        <StoreProvider>
+          <Routes>
+            <Route path="/acceso" element={form} />
+            <Route path="/portal/tickets" element={<h1>Mis Tickets</h1>} />
+            <Route path="/taller" element={<h1>Panel del taller</h1>} />
+          </Routes>
+        </StoreProvider>
+      </MemoryRouter>
+    );
+  }
+
+  async function submit(user) {
+    await user.type(screen.getByLabelText("Correo electrónico"), "persona@taller.com");
+    await user.type(screen.getByLabelText("Contraseña"), "Clave#2026");
+    await user.click(screen.getByRole("button", { name: /iniciar sesión/i }));
+  }
+
+  it("un técnico que entra por el portal va al panel del taller", async () => {
+    const api = { mode: "api", login: vi.fn().mockResolvedValue({ nombre: "Carlos", apellido: "Ríos", email: "persona@taller.com", rol: "TECHNICIAN" }), logout: vi.fn() };
+    const user = userEvent.setup();
+    renderPage("client", api);
+    await submit(user);
+
+    expect(await screen.findByRole("heading", { name: "Panel del taller" })).toBeInTheDocument();
+    expect(JSON.parse(sessionStorage.getItem("techfix.session"))).toEqual({ role: "staff", email: "persona@taller.com", name: "Carlos Ríos" });
+  });
+
+  it("un cliente no puede entrar al panel del taller y se cierra su sesión en el servidor", async () => {
+    const api = { mode: "api", login: vi.fn().mockResolvedValue({ nombre: "Ana", apellido: null, email: "persona@taller.com", rol: "CUSTOMER" }), logout: vi.fn().mockResolvedValue() };
+    const user = userEvent.setup();
+    renderPage("staff", api);
+    await submit(user);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(MESSAGES.notStaff);
+    expect(api.logout).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem("techfix.session")).toBeNull();
+  });
+});
+
 describe("navegación desde la landing", () => {
   it("el botón Iniciar sesión de la landing lleva al acceso del portal", async () => {
     const user = userEvent.setup();

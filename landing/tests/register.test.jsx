@@ -73,7 +73,7 @@ describe("pantalla de registro", () => {
   });
 
   it("registra con teléfono E.164, abre la sesión y no guarda la contraseña", async () => {
-    const api = { mode: "api", register: vi.fn().mockResolvedValue({ nombre: "Martín Gómez", email: "martin.gomez@gmail.com" }) };
+    const api = { mode: "api", register: vi.fn().mockResolvedValue({ nombre: "Martín", apellido: "Gómez", email: "martin.gomez@gmail.com", rol: "CUSTOMER" }) };
     const user = userEvent.setup();
     renderRegister(api);
 
@@ -81,8 +81,10 @@ describe("pantalla de registro", () => {
     await user.click(screen.getByRole("button", { name: /crear mi cuenta/i }));
 
     expect(await screen.findByRole("heading", { name: "Mis Tickets" })).toBeInTheDocument();
+    // Nombre y apellido separados para las columnas name y last_name de users.
     expect(api.register).toHaveBeenCalledWith({
-      nombre: "Martín Gómez",
+      nombre: "Martín",
+      apellido: "Gómez",
       email: "martin.gomez@gmail.com",
       telefono: "+51987654321",
       password: "TriageTech#2026",

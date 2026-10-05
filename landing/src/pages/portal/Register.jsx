@@ -4,7 +4,7 @@ import { ArrowRight, BellRing, CircleCheck, Contact, LoaderCircle, Mail, Smartph
 import { Field, InputIcon } from "../../components/ui.jsx";
 import PasswordFields, { isStrongPassword } from "../../components/PasswordFields.jsx";
 import { EMAIL_RE, useStore } from "../../data/store.jsx";
-import { authApi as defaultApi, MESSAGES, toE164 } from "../../api/auth.js";
+import { authApi as defaultApi, fullName, MESSAGES, splitFullName, toE164 } from "../../api/auth.js";
 import { FormAlert } from "./Login.jsx";
 
 export { PASSWORD_RULES } from "../../components/PasswordFields.jsx";
@@ -48,13 +48,15 @@ export default function Register({ api = defaultApi }) {
 
     setLoading(true);
     try {
+      const { nombre, apellido } = splitFullName(form.name);
       const usuario = await api.register({
-        nombre: form.name,
+        nombre,
+        apellido,
         email: form.email,
         telefono: toE164(form.prefix, form.phone),
         password: form.password,
       });
-      login({ role: "client", email: usuario.email, name: usuario.nombre });
+      login({ role: "client", email: usuario.email, name: fullName(usuario) || form.name.trim() });
       navigate("/portal/tickets", { replace: true });
     } catch (err) {
       const field = API_FIELDS[err?.field];

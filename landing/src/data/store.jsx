@@ -104,9 +104,12 @@ function today() {
 function reducer(state, action) {
   switch (action.type) {
     case "login":
-      return { ...state, session: action.session };
+      return { ...state, session: action.session, signedOut: false };
     case "logout":
-      return { ...state, session: null };
+      // signedOut distingue un cierre de sesión voluntario de un acceso sin sesión.
+      return { ...state, session: null, signedOut: true };
+    case "clearSignedOut":
+      return state.signedOut ? { ...state, signedOut: false } : state;
     case "createTicket": {
       const next = Math.max(...state.staffTickets.map((t) => Number(t.id.split("-")[1]))) + 1;
       const ticket = { ...action.ticket, id: `TCK-${next}`, date: today(), status: "Nuevo", origin: "Presencial", budget: null };

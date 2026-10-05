@@ -1,5 +1,5 @@
 /*
- * Cliente de autenticación del portal (spec 05).
+ * Cliente de autenticación del portal.
  *
  * - Con VITE_API_URL definido llama al backend: POST /registro, /login, /recuperar y /restablecer.
  * - Sin VITE_API_URL usa un simulador local para trabajar el frontend sin servidor.
@@ -26,6 +26,7 @@ export const MESSAGES = {
   invalidData: "Revisa los datos del formulario.",
   tooMany: "Demasiados intentos. Espera un momento antes de volver a intentar.",
   invalidToken: "El enlace no es válido o ya expiró. Solicita uno nuevo.",
+  notStaff: "Esta cuenta es de cliente y no tiene acceso al panel del taller. Ingresa por el portal de clientes.",
   unexpected: "Ocurrió un error inesperado. Inténtalo nuevamente.",
 };
 
@@ -36,6 +37,23 @@ export function normalizeEmail(email) {
 /** "+51" + "987 654 321" -> "+51987654321" (formato E.164). */
 export function toE164(prefix, phone) {
   return `${prefix}${String(phone).replace(/\D/g, "")}`;
+}
+
+/** "Martín Gómez Ruiz" -> { nombre: "Martín", apellido: "Gómez Ruiz" } (columnas name y last_name). */
+export function splitFullName(full) {
+  const clean = String(full).trim().split(/\s+/).filter(Boolean);
+  return { nombre: clean[0] || "", apellido: clean.slice(1).join(" ") || undefined };
+}
+
+export function fullName(usuario) {
+  return [usuario?.nombre, usuario?.apellido].filter(Boolean).join(" ");
+}
+
+/** Rol de la tabla users -> área del frontend. Sin rol (modo demostración) se usa el área de la pantalla. */
+export function areaForRole(rol, fallback) {
+  if (rol === "CUSTOMER") return "client";
+  if (rol === "TECHNICIAN" || rol === "ADMIN") return "staff";
+  return fallback;
 }
 
 export function nameFromEmail(email) {
@@ -86,9 +104,10 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
   if (base) {
     return {
       mode: "api",
-      async register({ nombre, email, telefono, password }) {
-        const data = await post("/registro", { nombre: nombre.trim(), email: normalizeEmail(email), telefono, password });
-        return data.usuario ?? { nombre: nombre.trim(), email: normalizeEmail(email) };
+      async register({ nombre, apellido, email, telefono, password }) {
+        const body = { nombre: nombre.trim(), apellido: apellido?.trim() || undefined, email: normalizeEmail(email), telefono, password };
+        const data = await post("/registro", body);
+        return data.usuario ?? { nombre: body.nombre, apellido: body.apellido ?? null, email: body.email };
       },
       async login({ email, password }) {
         const data = await post("/login", { email: normalizeEmail(email), password });
@@ -102,6 +121,14 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
         await post("/restablecer", { token, password });
         return { ok: true };
       },
+      // Borra la cookie de sesión del servidor; un fallo de red no debe impedir salir en el navegador.
+      async logout() {
+        try {
+          await post("/logout", {});
+        } catch {
+          /* la sesión local se cierra igual */
+        }
+      },
     };
   }
 
@@ -109,13 +136,14 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
   const registered = new Set(["registrado@techfix.ai"]);
   return {
     mode: "mock",
-    async register({ nombre, email }) {
+    async register({ nombre, apellido, email }) {
       await wait(delay);
       const mail = normalizeEmail(email);
       if (registered.has(mail)) throw new ApiError(MESSAGES.duplicateEmail, { status: 409, field: "email", code: "duplicate_email" });
       registered.add(mail);
-      return { nombre: nombre.trim(), email: mail };
+      return { nombre: nombre.trim(), apellido: apellido?.trim() || null, email: mail };
     },
+    async logout() {},
     async login({ email }) {
       await wait(delay);
       const mail = normalizeEmail(email);

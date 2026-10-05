@@ -38,6 +38,22 @@ describe("sesión abierta", () => {
   });
 });
 
+describe("cerrar sesión", () => {
+  it("vuelve a la landing y las rutas protegidas piden acceso otra vez", async () => {
+    const user = userEvent.setup();
+    renderApp("/portal/tickets", client);
+
+    await user.click(screen.getByRole("button", { name: "Menú de usuario" }));
+    await user.click(screen.getByRole("menuitem", { name: /cerrar sesión/i }));
+
+    expect(await screen.findByRole("heading", { name: /Cada reparación avanza/ })).toBeInTheDocument();
+    expect(sessionStorage.getItem("techfix.session")).toBeNull();
+
+    await user.click(screen.getByRole("link", { name: /Ir al portal del cliente/ }));
+    expect(await screen.findByRole("heading", { name: "Acceder a mi Portal de Servicio" })).toBeInTheDocument();
+  });
+});
+
 describe("nueva consulta desde el chat", () => {
   it("pide equipo y falla, crea el ticket y lo muestra en Mis Tickets", async () => {
     const user = userEvent.setup();
