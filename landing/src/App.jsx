@@ -9,6 +9,7 @@ import NotFound from "./pages/NotFound.jsx";
 import Login from "./pages/portal/Login.jsx";
 import Register from "./pages/portal/Register.jsx";
 import Recover from "./pages/portal/Recover.jsx";
+import Reset from "./pages/portal/Reset.jsx";
 import Tickets from "./pages/portal/Tickets.jsx";
 import Assistant from "./pages/portal/Assistant.jsx";
 import StaffLogin from "./pages/staff/StaffLogin.jsx";
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/portal/acceso" element={<Login />} />
           <Route path="/portal/registro" element={<Register />} />
           <Route path="/portal/recuperar" element={<Recover />} />
+          <Route path="/portal/restablecer" element={<Reset />} />
           <Route path="/taller/acceso" element={<StaffLogin />} />
           <Route path="/ayuda" element={<Help />} />
           <Route path="*" element={<NotFound />} />
