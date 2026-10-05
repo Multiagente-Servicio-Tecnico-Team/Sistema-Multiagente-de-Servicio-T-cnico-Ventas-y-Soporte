@@ -1,6 +1,11 @@
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import (
+    SystemMessage,
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+)
 
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.tools.ventas_tools import (
@@ -9,71 +14,183 @@ from app.agents.decentralized.tools.ventas_tools import (
 )
 
 
-# Carga las variables del archivo .env
+# =========================================================
+# CONFIGURACIÓN DEL MODELO
+# =========================================================
+
 load_dotenv()
 
-
-# Modelo LLM utilizado por el agente
 llm = ChatGroq(
     model="openai/gpt-oss-20b",
     temperature=0,
     reasoning_effort="low",
     model_kwargs={
         "parallel_tool_calls": False,
+        "tool_choice": "auto",
     }
 )
 
 
-# Herramientas disponibles para el agente de Ventas
+# =========================================================
+# HERRAMIENTAS
+# =========================================================
+
 ventas_tools = [
     generar_cotizacion,
     transferir_a_tecnico,
 ]
 
-
-# Vinculamos las herramientas con el LLM
 ventas_llm = llm.bind_tools(ventas_tools)
 
 
-# Instrucciones y responsabilidades del agente
+# =========================================================
+# PROMPT DEL AGENTE
+# =========================================================
+
 SYSTEM_PROMPT = """
-Eres el agente de Ventas de un sistema multiagente de servicio técnico,
-ventas y soporte.
+Eres el agente de Ventas de un sistema multiagente
+de servicio técnico, ventas y soporte.
 
 Tus responsabilidades son:
-- Atender solicitudes relacionadas con precios y cotizaciones.
-- Generar cotizaciones preliminares de servicios.
-- Utilizar generar_cotizacion cuando el usuario solicite conocer
-  el precio de un servicio.
-- No inventar precios que no hayan sido proporcionados por la herramienta.
+- Atender consultas comerciales.
+- Generar cotizaciones preliminares.
+- Utilizar generar_cotizacion cuando el usuario
+  solicite precios.
+- No inventar precios ni información comercial.
 
-Puedes recibir solicitudes que previamente fueron atendidas por otros
-agentes del sistema.
+Puedes recibir solicitudes atendidas previamente
+por otros agentes.
 
-IMPORTANTE:
-- Si en el historial existe un ToolMessage con el resultado de
-  diagnosticar_problema, considera que el diagnóstico técnico ya fue realizado.
-- Si el diagnóstico ya fue realizado y el usuario solicita un precio
-  o cotización, debes utilizar generar_cotizacion.
-- En ese caso, no debes solicitar otro diagnóstico ni transferir
-  nuevamente al agente Técnico.
-- Para una solicitud de reparación, utiliza generar_cotizacion
-  indicando "reparacion" como servicio.
+REGLAS:
+- Si existe un diagnóstico técnico previo,
+  considera que ya fue realizado.
+- Si el usuario solicita una cotización después
+  del diagnóstico, utiliza generar_cotizacion.
+- No repitas diagnósticos ya realizados.
+- Para reparaciones utiliza "reparacion".
+- Para mantenimiento utiliza "mantenimiento".
+- Si generar_cotizacion ya devolvió un precio
+  para la solicitud actual, responde con ese
+  resultado y no vuelvas a ejecutar la herramienta.
 """
 
+
+# =========================================================
+# CONSTRUCCIÓN DEL CONTEXTO
+# =========================================================
+
+def construir_contexto_ventas(state: AgentState):
+    """
+    Construye el historial específico de Ventas.
+
+    Conserva:
+    - Mensajes del usuario.
+    - Diagnósticos previos del agente Técnico.
+    - Llamadas y resultados de herramientas de Ventas.
+
+    Omite:
+    - Transferencias internas de otros agentes.
+    - Mensajes internos que no necesita Ventas.
+    """
+
+    contexto = []
+    messages = state["messages"]
+
+    # Herramientas que pertenecen a Ventas
+    nombres_tools = {
+        "generar_cotizacion",
+        "transferir_a_tecnico",
+    }
+
+    # Identificamos las llamadas de herramientas
+    # realizadas por Ventas.
+    llamadas_ventas = set()
+
+    for mensaje in messages:
+        if isinstance(mensaje, AIMessage):
+            for llamada in mensaje.tool_calls:
+                if llamada["name"] in nombres_tools:
+                    llamadas_ventas.add(llamada["id"])
+
+    # Construimos el contexto respetando el orden
+    # original de los mensajes.
+    for mensaje in messages:
+
+        if isinstance(mensaje, HumanMessage):
+            contexto.append(mensaje)
+
+        elif isinstance(mensaje, AIMessage):
+
+            llamadas = mensaje.tool_calls
+
+            # Conservamos únicamente mensajes cuyas
+            # llamadas corresponden a herramientas
+            # propias de Ventas.
+            if llamadas and all(
+                llamada["id"] in llamadas_ventas
+                for llamada in llamadas
+            ):
+                contexto.append(mensaje)
+
+        elif isinstance(mensaje, ToolMessage):
+
+            # Conservamos los resultados de Ventas
+            # asociados a sus llamadas anteriores.
+            if mensaje.tool_call_id in llamadas_ventas:
+                contexto.append(mensaje)
+
+            # Incorporamos diagnósticos anteriores
+            # como información contextual.
+            elif mensaje.name == "diagnosticar_problema":
+                contexto.append(
+                    HumanMessage(
+                        content=(
+                            "Diagnóstico técnico previo:\n"
+                            f"{mensaje.content}"
+                        )
+                    )
+                )
+
+    return contexto
+
+# NODO DEL AGENTE DE VENTAS
 def ventas_node(state: AgentState):
     """
-    Nodo del agente de Ventas dentro del grafo descentralizado.
+    Procesa las solicitudes comerciales.
+
+    Utiliza un contexto filtrado para evitar
+    interferencias con herramientas de otros agentes.
     """
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
-        *state["messages"]
+        *construir_contexto_ventas(state),
     ]
 
-    response = ventas_llm.invoke(messages)
+    try:
+        response = ventas_llm.invoke(messages)
 
-    return {
-        "messages": [response],
-        "current_agent": "ventas"
-    }
+        return {
+            "messages": [response],
+            "current_agent": "ventas",
+        }
+
+    except Exception as e:
+        error = (
+            f"Error en el agente Ventas: "
+            f"{type(e).__name__}"
+        )
+
+        return {
+            "messages": [
+                AIMessage(
+                    content=(
+                        "No fue posible procesar la "
+                        "cotización en este momento. "
+                        "Inténtalo nuevamente más tarde."
+                    )
+                )
+            ],
+            "current_agent": "ventas",
+            "errors": state.get("errors", []) + [error],
+        }

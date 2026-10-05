@@ -1,7 +1,6 @@
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage
-
+from langchain_core.messages import SystemMessage, AIMessage
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.tools.tecnico_tools import (
     diagnosticar_problema,
@@ -70,19 +69,43 @@ REGLA OBLIGATORIA PARA SOLICITUDES MIXTAS:
 def tecnico_node(state: AgentState):
     """
     Nodo del agente Técnico dentro del grafo descentralizado.
+    Incluye manejo de excepciones del modelo.
     """
 
-    # Combinamos el System Prompt con el historial de mensajes
+    # Combinamos el System Prompt con el historial
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         *state["messages"]
     ]
 
-    # El LLM procesa los mensajes y puede decidir utilizar una tool
-    response = tecnico_llm.invoke(messages)
+    try:
+        # Ejecutamos el modelo de lenguaje
+        response = tecnico_llm.invoke(messages)
 
-    # Actualizamos el estado compartido
-    return {
-        "messages": [response],
-        "current_agent": "tecnico"
-    }
+        # Si funciona, actualizamos el estado
+        return {
+            "messages": [response],
+            "current_agent": "tecnico"
+        }
+
+    except Exception as e:
+        # Registramos el tipo de error
+        error = (
+            f"Error en el agente Técnico: "
+            f"{type(e).__name__}"
+        )
+
+        # Devolvemos una respuesta controlada
+        return {
+            "messages": [
+                AIMessage(
+                    content=(
+                        "No fue posible completar el "
+                        "diagnóstico técnico en este momento. "
+                        "Inténtalo nuevamente más tarde."
+                    )
+                )
+            ],
+            "current_agent": "tecnico",
+            "errors": state.get("errors", []) + [error]
+        }

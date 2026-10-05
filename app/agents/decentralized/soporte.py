@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.tools.soporte_tools import (
     consultar_estado_ticket,
@@ -57,22 +57,47 @@ cuando corresponda.
 """
 
 
+
 def soporte_node(state: AgentState):
     """
     Nodo del agente de Soporte dentro del grafo descentralizado.
+    Incluye manejo de excepciones del modelo.
     """
 
-    # Combinamos el System Prompt con el historial de mensajes
+    # Combinamos el System Prompt con el historial
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         *state["messages"]
     ]
 
-    # El LLM procesa los mensajes y puede decidir utilizar una tool
-    response = soporte_llm.invoke(messages)
+    try:
+        # El modelo procesa la solicitud
+        response = soporte_llm.invoke(messages)
 
-    # Actualizamos el estado compartido
-    return {
-        "messages": [response],
-        "current_agent": "soporte"
-    }
+        # Actualizamos el estado compartido
+        return {
+            "messages": [response],
+            "current_agent": "soporte"
+        }
+
+    except Exception as e:
+        # Registramos el tipo de error
+        error = (
+            f"Error en el agente Soporte: "
+            f"{type(e).__name__}"
+        )
+
+        # Devolvemos una respuesta controlada
+        return {
+            "messages": [
+                AIMessage(
+                    content=(
+                        "No fue posible procesar tu "
+                        "solicitud en este momento. "
+                        "Inténtalo nuevamente más tarde."
+                    )
+                )
+            ],
+            "current_agent": "soporte",
+            "errors": state.get("errors", []) + [error]
+        }

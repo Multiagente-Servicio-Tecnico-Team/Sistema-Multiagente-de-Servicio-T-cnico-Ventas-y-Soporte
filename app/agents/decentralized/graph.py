@@ -1,217 +1,241 @@
+
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
+
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.soporte import soporte_node, soporte_tools
 from app.agents.decentralized.tecnico import tecnico_node, tecnico_tools
 from app.agents.decentralized.ventas import ventas_node, ventas_tools
 
+
 # =========================================================
-# ROUTERS
+# CONFIGURACIÓN
 # =========================================================
 
-def route_soporte_tools(state: AgentState):
+MAX_HANDOFFS = 5
+
+# Herramientas que transfieren el control
+HANDOFF_TOOLS = {
+    "transferir_a_tecnico": "tecnico",
+    "transferir_a_ventas": "ventas",
+}
+
+
+# =========================================================
+# DETECCIÓN DE TRANSFERENCIAS
+# =========================================================
+
+def detectar_handoff(messages):
     """
-    Decide qué agente debe continuar después de ejecutar
-    una herramienta del agente de Soporte.
+    Identifica qué herramienta fue ejecutada.
+
+    No depende del texto que devuelve la herramienta.
     """
 
-    ultimo_mensaje = state["messages"][-1]
+    # Buscamos los resultados de la última ejecución
+    tool_messages = []
 
-    # Handoff hacia el agente Técnico
-    if "TRANSFERIR_TECNICO" in ultimo_mensaje.content:
-        return "tecnico"
+    for message in reversed(messages):
+        if isinstance(message, ToolMessage):
+            tool_messages.append(message)
+        else:
+            break
 
-    # Handoff hacia el agente de Ventas
-    if "TRANSFERIR_VENTAS" in ultimo_mensaje.content:
-        return "ventas"
+    if not tool_messages:
+        return None
 
-    # Si fue una herramienta normal de Soporte,
-    # regresamos al agente de Soporte
-    return "soporte"
+    # Verificamos qué herramientas se ejecutaron
+    for message in reversed(tool_messages):
+        if message.status == "error":
+            continue
 
-def route_tecnico_tools(state: AgentState):
+        destino = HANDOFF_TOOLS.get(message.name)
+
+        if destino:
+            return destino
+
+    return None
+
+
+# =========================================================
+# ACTUALIZACIÓN DEL ESTADO
+# =========================================================
+
+def registrar_handoff(state: AgentState, origen: str):
     """
-    Decide qué agente debe continuar después de ejecutar
-    una herramienta del agente Técnico.
+    Registra una transferencia entre agentes y
+    evita que se produzcan demasiados handoffs.
     """
-    ultimo_mensaje = state["messages"][-1]
 
-    # Si Técnico ejecutó explícitamente el handoff a Ventas
-    if "TRANSFERIR_VENTAS" in ultimo_mensaje.content:
-        return "ventas"
+    destino = detectar_handoff(state["messages"])
 
-    # Si Técnico acaba de realizar un diagnóstico,
-    # verificamos si la solicitud original también pedía
-    # precio o cotización.
-    if getattr(ultimo_mensaje, "name", None) == "diagnosticar_problema":
-        mensaje_usuario = state["messages"][0].content.lower()
+    historial = list(state.get("handoff_history", []))
+    contador = state.get("handoff_count", 0)
+    errores = list(state.get("errors", []))
 
-        palabras_comerciales = [
-            "precio",
-            "cuesta",
-            "costo",
-            "cotizacion",
-            "cotización",
-            "presupuesto",
-        ]
+    # No hubo transferencia
+    if destino is None:
+        return {"next_agent": origen}
 
-        if any(
-            palabra in mensaje_usuario
-            for palabra in palabras_comerciales
-        ):
-            return "ventas"
+    # Evitamos transferencias al mismo agente
+    if destino == origen:
+        errores.append("Transferencia al mismo agente")
+        return {
+            "next_agent": "finalizar",
+            "errors": errores,
+            "messages": [
+                AIMessage(
+                    content="No se pudo completar la transferencia."
+                )
+            ],
+        }
 
-    # Si solo era un diagnóstico, vuelve al agente Técnico
-    return "tecnico"
+    # Control de límite
+    if contador >= MAX_HANDOFFS:
+        errores.append("Límite de transferencias alcanzado")
 
-def route_ventas_tools(state: AgentState):
+        return {
+            "next_agent": "finalizar",
+            "errors": errores,
+            "messages": [
+                AIMessage(
+                    content=(
+                        "No fue posible completar la solicitud "
+                        "tras varios intentos de transferencia."
+                    )
+                )
+            ],
+        }
+
+    # Registramos la transferencia
+    historial.append({
+        "origen": origen,
+        "destino": destino,
+    })
+
+    return {
+        "next_agent": destino,
+        "handoff_count": contador + 1,
+        "handoff_history": historial,
+    }
+
+
+# =========================================================
+# NODOS DE CONTROL
+# =========================================================
+
+def auditar_soporte(state: AgentState):
+    return registrar_handoff(state, "soporte")
+
+
+def auditar_tecnico(state: AgentState):
+    return registrar_handoff(state, "tecnico")
+
+
+def auditar_ventas(state: AgentState):
+    return registrar_handoff(state, "ventas")
+
+
+def route_next_agent(state: AgentState):
     """
-    Decide qué agente debe continuar después de ejecutar
-    una herramienta del agente de Ventas.
+    Devuelve el siguiente agente indicado
+    por el estado compartido.
     """
-    ultimo_mensaje = state["messages"][-1]
+    return state.get("next_agent") or "finalizar"
 
-    if "TRANSFERIR_TECNICO" in ultimo_mensaje.content:
-        return "tecnico"
 
-    return "ventas"
+# =========================================================
+# CONSTRUCCIÓN DEL GRAFO
+# =========================================================
 
-# 1. Creamos el grafo utilizando nuestro estado compartido
 builder = StateGraph(AgentState)
 
-
-# =========================================================
-# AGENTE DE SOPORTE
-# =========================================================
-
-# Agregamos el agente de Soporte como nodo
+# Agentes
 builder.add_node("soporte", soporte_node)
-
-# Nodo encargado de ejecutar las tools de Soporte
-soporte_tool_node = ToolNode(soporte_tools)
-builder.add_node("soporte_tools", soporte_tool_node)
-
-
-# =========================================================
-# AGENTE TÉCNICO
-# =========================================================
-
-# Agregamos el agente Técnico como nodo
 builder.add_node("tecnico", tecnico_node)
-
-# Nodo encargado de ejecutar las tools del agente Técnico
-tecnico_tool_node = ToolNode(tecnico_tools)
-builder.add_node("tecnico_tools", tecnico_tool_node)
-
-# =========================================================
-# AGENTE DE VENTAS
-# =========================================================
-
-# Agregamos el agente de Ventas como nodo
 builder.add_node("ventas", ventas_node)
 
-# Nodo encargado de ejecutar las tools del agente de Ventas
-ventas_tool_node = ToolNode(ventas_tools)
-builder.add_node("ventas_tools", ventas_tool_node)
+# Herramientas con manejo de errores
+builder.add_node(
+    "soporte_tools",
+    ToolNode(soporte_tools, handle_tool_errors=True)
+)
+
+builder.add_node(
+    "tecnico_tools",
+    ToolNode(tecnico_tools, handle_tool_errors=True)
+)
+
+builder.add_node(
+    "ventas_tools",
+    ToolNode(ventas_tools, handle_tool_errors=True)
+)
+# Auditoría de transferencias
+builder.add_node("auditar_soporte", auditar_soporte)
+builder.add_node("auditar_tecnico", auditar_tecnico)
+builder.add_node("auditar_ventas", auditar_ventas)
 
 
 # =========================================================
-# INICIO DEL GRAFO
+# PUNTO DE ENTRADA
 # =========================================================
 
-# Por ahora el grafo comienza en Soporte
 builder.add_edge(START, "soporte")
 
 
 # =========================================================
-# FLUJO DE SOPORTE
+# EJECUCIÓN DE LOS AGENTES
 # =========================================================
 
-# Después de ejecutar Soporte:
-# - si pidió una tool -> va a soporte_tools
-# - si no pidió una tool -> termina
-builder.add_conditional_edges(
-    "soporte",
-    tools_condition,
-    {
-        "tools": "soporte_tools",
-        "__end__": END,
-    },
-)
-
-
-# Después de ejecutar una tool de Soporte:
-# - si solicitó transferencia -> va a Técnico
-# - si fue una tool normal -> regresa a Soporte
-builder.add_conditional_edges(
-    "soporte_tools",
-    route_soporte_tools,
-    {
-        "tecnico": "tecnico",
-        "soporte": "soporte",
-        "ventas": "ventas",
-    },
-)
+for agente in ("soporte", "tecnico", "ventas"):
+    builder.add_conditional_edges(
+        agente,
+        tools_condition,
+        {
+            "tools": f"{agente}_tools",
+            "__end__": END,
+        },
+    )
 
 
 # =========================================================
-# FLUJO DEL AGENTE TÉCNICO
+# EJECUCIÓN Y AUDITORÍA DE HERRAMIENTAS
 # =========================================================
 
-# Después de ejecutar Técnico:
-# - si pidió una tool -> va a tecnico_tools
-# - si no pidió una tool -> termina
-builder.add_conditional_edges(
-    "tecnico",
-    tools_condition,
-    {
-        "tools": "tecnico_tools",
-        "__end__": END,
-    },
-)
+builder.add_edge("soporte_tools", "auditar_soporte")
+builder.add_edge("tecnico_tools", "auditar_tecnico")
+builder.add_edge("ventas_tools", "auditar_ventas")
 
-# Después de ejecutar una tool de Técnico:
-# - si solicitó transferencia -> va a Ventas
-# - si fue diagnóstico -> regresa a Técnico
-builder.add_conditional_edges(
-    "tecnico_tools",
-    route_tecnico_tools,
-    {
-        "ventas": "ventas",
-        "tecnico": "tecnico",
-    },
-)
 
 # =========================================================
-# FLUJO DEL AGENTE DE VENTAS
+# ENRUTAMIENTO DESCENTRALIZADO
 # =========================================================
 
-# Después de ejecutar Ventas:
-# - si pidió una tool -> va a ventas_tools
-# - si no pidió una tool -> termina
-builder.add_conditional_edges(
-    "ventas",
-    tools_condition,
-    {
-        "tools": "ventas_tools",
-        "__end__": END,
-    },
-)
+# Cada agente puede continuar o transferir el control.
+# No existe un supervisor que tome las decisiones.
 
-# Después de ejecutar una tool de Ventas:
-# - si solicitó transferencia -> va a Técnico
-# - si fue una cotización -> regresa a Ventas
-builder.add_conditional_edges(
-    "ventas_tools",
-    route_ventas_tools,
-    {
-        "tecnico": "tecnico",
-        "ventas": "ventas",
-    },
-)
+rutas = {
+    "soporte": "soporte",
+    "tecnico": "tecnico",
+    "ventas": "ventas",
+    "finalizar": END,
+}
+
+for auditor in (
+    "auditar_soporte",
+    "auditar_tecnico",
+    "auditar_ventas",
+):
+    builder.add_conditional_edges(
+        auditor,
+        route_next_agent,
+        rutas,
+    )
+
 
 # =========================================================
-# COMPILACIÓN DEL GRAFO
+# COMPILACIÓN
 # =========================================================
 
 graph = builder.compile()
