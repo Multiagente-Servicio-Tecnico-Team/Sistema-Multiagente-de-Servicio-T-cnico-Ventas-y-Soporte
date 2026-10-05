@@ -23,6 +23,20 @@ Spec: `spec/05-frontend-landing-auth.md`. Rama: `frontend` (antes `landing-page`
 Además, la rama conserva las demás pantallas de Figma (portal del cliente y taller) enlazadas desde la landing;
 ver la tabla de rutas al final.
 
+## Revisión de la spec y de la lógica (2026-10-05)
+
+Los cuatro criterios de aceptación se cumplían. La revisión del flujo encontró huecos que se corrigieron:
+
+| Hallazgo | Corrección |
+| --- | --- |
+| La recuperación enviaba un enlace sin pantalla de destino | Nueva pantalla `/portal/restablecer?token=…` (`pages/portal/Reset.jsx`) y contrato `POST /restablecer`; estados de enlace inválido o vencido y de éxito. En modo demostración, botón "Abrir enlace de prueba" (`token=expirado` simula vencido). |
+| Acceso y registro seguían visibles con sesión abierta | Redirigen al área del usuario; la landing muestra "Ir a mi portal" / "Ir al panel". |
+| "Nueva Consulta / Chat IA" abría siempre el ticket TCK-2041 | El asistente tiene dos modos: consulta nueva (pide equipo y falla, crea ticket "Recibido · En triage" que también aparece en la cola del taller como "Nuevo") y ticket existente (`?ticket=TCK-2041`). |
+| Volver a abrir un enlace con otro token conservaba el estado anterior | El formulario se reinicia al cambiar el token. |
+| Sin pruebas para recuperación | Pruebas de recuperación, restablecimiento y del contrato `/restablecer`. |
+
+Requisitos de contraseña unificados en `components/PasswordFields.jsx` (registro y restablecimiento).
+
 ## Evidencia
 
 ```bash
@@ -31,7 +45,11 @@ npm --prefix landing test
 npm --prefix landing run build
 ```
 
-- `npm test`: 3 archivos, **27 pruebas aprobadas** (`landing/tests/`):
+- `npm test`: 5 archivos, **39 pruebas aprobadas** (`landing/tests/`):
+  - `recovery.test.jsx` (7): validación del correo, confirmación sin revelar existencia, enlace sin token,
+    política de contraseña al restablecer, envío de `{ token, password }`, token vencido y contrato 410.
+  - `consultation.test.jsx` (5): redirección de acceso y registro con sesión, enlace "Ir a mi portal",
+    consulta nueva que crea el ticket y lo muestra en Mis Tickets, conversación de ticket existente.
   - `auth-api.test.js` (9): URL y cuerpo de `/registro` y `/login`, correo normalizado, `credentials`,
     409 → campo correo, 401 → credenciales, red caída, 5xx sin exponer detalles, duplicados en simulador, E.164.
   - `register.test.jsx` (11): reglas de validación, lista de requisitos en vivo, envío con teléfono E.164,
@@ -52,7 +70,7 @@ npm --prefix landing run build
 
 | Ruta | Pantalla |
 | --- | --- |
-| `/`, `/portal/acceso`, `/portal/registro`, `/portal/recuperar` | Alcance de esta spec |
+| `/`, `/portal/acceso`, `/portal/registro`, `/portal/recuperar`, `/portal/restablecer` | Alcance de esta spec |
 | `/portal/tickets`, `/portal/asistente` | Portal del cliente (Figma) |
 | `/taller/acceso` | Acceso de personal (creada) |
 | `/taller`, `/taller/tickets/nuevo`, `/taller/tickets/:id` | Panel de taller (Figma) |
