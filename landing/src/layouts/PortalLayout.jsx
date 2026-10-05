@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { LogOut, UserRound } from "lucide-react";
 import Logo from "../components/Logo.jsx";
 import { useStore } from "../data/store.jsx";
+import { authApi } from "../api/auth.js";
 
 export function UserMenu({ extra }) {
   const { session, logout } = useStore();
@@ -24,9 +25,10 @@ export function UserMenu({ extra }) {
     };
   }, [open]);
 
-  const signOut = () => {
+  const signOut = async () => {
+    await authApi.logout();
     logout();
-    navigate("/");
+    navigate("/", { replace: true });
   };
 
   return (

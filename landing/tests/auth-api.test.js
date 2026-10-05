@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, createAuthApi, MESSAGES, toE164 } from "../src/api/auth.js";
+import { ApiError, areaForRole, createAuthApi, MESSAGES, splitFullName, toE164 } from "../src/api/auth.js";
 
 function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -68,6 +68,31 @@ describe("cliente de autenticación (modo demostración)", () => {
     const api = createAuthApi({ delay: 0 });
     await api.register({ nombre: "Demo", email: "nuevo@demo.pe", telefono: "+51987654321", password: "Clave#2026" });
     await expect(api.register({ nombre: "Demo", email: "nuevo@demo.pe", telefono: "+51987654321", password: "Clave#2026" })).rejects.toMatchObject({ field: "email" });
+  });
+});
+
+describe("integración con el backend", () => {
+  it("envía nombre y apellido separados", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(201, { usuario: { id: 1, nombre: "Martín", apellido: "Gómez", email: "m@g.pe", rol: "CUSTOMER" } }));
+    const api = createAuthApi({ baseUrl: "http://api.local", fetchImpl });
+    await api.register({ nombre: "Martín", apellido: " Gómez ", email: "m@g.pe", telefono: "+51987654321", password: "Clave#2026" });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({ nombre: "Martín", apellido: "Gómez" });
+  });
+
+  it("logout llama a POST /logout y no falla si el servidor no responde", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    const api = createAuthApi({ baseUrl: "http://api.local", fetchImpl });
+    await expect(api.logout()).resolves.toBeUndefined();
+    expect(fetchImpl.mock.calls[0][0]).toBe("http://api.local/logout");
+  });
+
+  it("separa el nombre completo y asigna el área según el rol", () => {
+    expect(splitFullName("  María José   Pérez ")).toEqual({ nombre: "María", apellido: "José Pérez" });
+    expect(splitFullName("Cher")).toEqual({ nombre: "Cher", apellido: undefined });
+    expect(areaForRole("CUSTOMER", "staff")).toBe("client");
+    expect(areaForRole("TECHNICIAN", "client")).toBe("staff");
+    expect(areaForRole("ADMIN", "client")).toBe("staff");
+    expect(areaForRole(undefined, "client")).toBe("client");
   });
 });
 

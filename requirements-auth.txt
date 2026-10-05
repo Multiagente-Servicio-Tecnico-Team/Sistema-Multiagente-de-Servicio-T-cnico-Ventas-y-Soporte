@@ -1,0 +1,11 @@
+# API de cuentas (app/accounts): registro e inicio de sesión
+fastapi==0.142.2
+uvicorn==0.54.0
+SQLAlchemy==2.1.1
+pg8000==1.31.5
+bcrypt==5.0.0
+python-dotenv==1.2.3
+# Pruebas
+pytest==8.4.2
+httpx==0.28.1
+httpx2==2.13.1
