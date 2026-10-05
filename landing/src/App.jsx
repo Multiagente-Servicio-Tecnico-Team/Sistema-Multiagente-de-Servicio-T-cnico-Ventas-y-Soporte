@@ -15,6 +15,8 @@ import StaffLogin from "./pages/staff/StaffLogin.jsx";
 import Workshop from "./pages/staff/Workshop.jsx";
 import TicketDetail from "./pages/staff/TicketDetail.jsx";
 import NewTicket from "./pages/staff/NewTicket.jsx";
+import Inventory from "./pages/staff/Inventory.jsx";
+import PartForm from "./pages/staff/PartForm.jsx";
 
 export default function App() {
   return (
@@ -42,6 +44,9 @@ export default function App() {
           <Route path="/taller" element={<Workshop />} />
           <Route path="/taller/tickets/nuevo" element={<NewTicket />} />
           <Route path="/taller/tickets/:id" element={<TicketDetail />} />
+          <Route path="/taller/inventario" element={<Inventory />} />
+          <Route path="/taller/inventario/nuevo" element={<PartForm />} />
+          <Route path="/taller/inventario/:sku/editar" element={<PartForm />} />
         </Route>
       </Routes>
     </>
