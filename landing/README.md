@@ -63,14 +63,20 @@ El cliente `src/api/auth.js` decide el modo según `VITE_API_URL`:
 
 - **Sin definir (por defecto):** modo demostración con simulador local. Cualquier correo válido inicia sesión;
   `registrado@techfix.ai` simula un correo ya registrado (409) y `token=expirado` un enlace vencido.
-- **Definido:** llama al backend con `POST`, JSON y `credentials: "include"` (cookie de sesión HttpOnly).
+- **Definido:** llama a la API de cuentas ([`app/accounts`](../app/accounts/README.md)) con `POST`, JSON y
+  `credentials: "include"` (cookie de sesión HttpOnly).
 
 | Endpoint | Cuerpo | Respuesta esperada |
 | --- | --- | --- |
-| `/registro` | `{ nombre, email, telefono, password }` | `201 { usuario }` · `409` correo duplicado · `400/422` datos inválidos |
+| `/registro` | `{ nombre, apellido, email, telefono, password }` | `201 { usuario }` · `409` correo duplicado · `422` datos inválidos |
 | `/login` | `{ email, password }` | `200 { usuario }` + cookie · `401` credenciales · `429` intentos |
+| `/logout` | — | `204` y borra la cookie |
 | `/recuperar` | `{ email }` | `200` siempre |
 | `/restablecer` | `{ token, password }` | `200` · `400/410` token inválido o vencido |
+
+`usuario` incluye `rol`: `CUSTOMER` entra al portal del cliente y `TECHNICIAN` o `ADMIN` al panel del taller;
+una cuenta de cliente no puede entrar al panel. El campo "Nombre y Apellido" se envía separado en `nombre` y
+`apellido`.
 
 Mensajes al usuario: 409 se muestra en el campo correo; 401 como "Correo o contraseña incorrectos"; errores de
 red o 5xx con un mensaje genérico, nunca con el texto del servidor.
@@ -87,7 +93,7 @@ npm --prefix landing run dev
 Abrir http://localhost:5173. Para usar un backend local, crear `landing/.env` a partir de `.env.example`:
 
 ```bash
-VITE_API_URL=http://127.0.0.1:8000
+VITE_API_URL=http://localhost:8000
 ```
 
 ## Pruebas
@@ -116,5 +122,8 @@ Genera `landing/dist/` (HTML, CSS y JS estáticos). Para publicarlo:
 
 ## Limitaciones actuales
 
-- Sin backend conectado: el modo demostración no verifica contraseñas ni persiste datos al recargar.
+- En modo demostración (sin `VITE_API_URL`) no se verifican contraseñas ni se persisten datos al recargar.
+- La API de cuentas aún no implementa `/recuperar` ni `/restablecer`; esas pantallas solo funcionan en modo
+  demostración.
+- Tickets, inventario y asistente usan datos de demostración en memoria.
 - El asistente responde con textos fijos; aún no está conectado a los agentes LangGraph del backend.
