@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "TechFix.AI · Registro e inicio de sesión",
-    "description": "Pruebas de la API de cuentas: POST /registro, POST /login, GET /me y POST /logout. Ejecutar en orden. La primera petición genera un correo único para cada corrida.",
+    "description": "Pruebas de la API de cuentas: POST /registro, POST /login, GET /me, POST /logout, POST /recuperar y POST /restablecer. Ejecutar en orden. La primera petición genera un correo único para cada corrida.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -201,6 +201,89 @@
         { "listen": "test", "script": { "exec": ["pm.test('401 tras cerrar sesión', () => pm.response.to.have.status(401));"] } }
       ],
       "request": { "method": "GET", "url": "{{base_url}}/me" }
+    },
+    {
+      "name": "11 Recuperar con correo registrado",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('200 con mensaje genérico', () => {",
+            "  pm.response.to.have.status(200);",
+            "  pm.expect(pm.response.json().detail).to.include('Si el correo está registrado');",
+            "});",
+            "pm.test('No devuelve el token', () => pm.expect(pm.response.text()).to.not.include('token'));",
+            "pm.collectionVariables.set('respuesta_recuperar', pm.response.text());"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/recuperar",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\"\n}" }
+      }
+    },
+    {
+      "name": "12 Recuperar con correo no registrado",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('Misma respuesta que con un correo registrado', () => {",
+            "  pm.response.to.have.status(200);",
+            "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('respuesta_recuperar'));",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/recuperar",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"nadie.{{$timestamp}}@demo.pe\"\n}" }
+      }
+    },
+    {
+      "name": "13 Restablecer con enlace inválido",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('410 enlace no válido', () => {",
+            "  pm.response.to.have.status(410);",
+            "  pm.expect(pm.response.json()).to.eql({ detail: 'El enlace no es válido o ya expiró.', code: 'invalid_token' });",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/restablecer",
+        "body": { "mode": "raw", "raw": "{\n  \"token\": \"token-que-no-existe-{{$timestamp}}\",\n  \"password\": \"NuevaClave#2026\"\n}" }
+      }
+    },
+    {
+      "name": "14 Restablecer con contraseña débil",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('422 en el campo password', () => {",
+            "  pm.response.to.have.status(422);",
+            "  pm.expect(pm.response.json().field).to.eql('password');",
+            "});",
+            "pm.test('No repite la contraseña enviada', () => pm.expect(pm.response.text()).to.not.include('debil'));"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/restablecer",
+        "body": { "mode": "raw", "raw": "{\n  \"token\": \"token-de-prueba-{{$timestamp}}\",\n  \"password\": \"debil\"\n}" }
+      }
     }
   ]
 }
