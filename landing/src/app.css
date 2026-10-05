@@ -651,3 +651,11 @@
 .form-alert svg { flex: none; margin-top: 2px; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Restablecer contraseña y consultas nuevas */
+.btn-row--start { justify-content: flex-start; margin-top: 18px; }
+.success-state__icon--warn { background: #fff4e0; color: #b45309; }
+.created { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--white); }
+.created > div { flex: 1 1 200px; }
+.created strong { color: var(--ink); }
+.created p { font-size: 13px; color: var(--text); }

@@ -5,6 +5,7 @@ import { ItemIcon, Toast } from "../../components/ui.jsx";
 import { formatPEN, useStore } from "../../data/store.jsx";
 
 const statusInfo = {
+  received: { label: "Recibido · En triage", tone: "blue" },
   approval: { label: "Esperando aprobación", tone: "teal" },
   workshop: { label: "En diagnóstico / taller", tone: "blue" },
   ready: { label: "Listo para entrega en tienda", tone: "green" },
@@ -13,7 +14,7 @@ const statusInfo = {
 
 const filters = [
   { id: "all", label: "Todos", match: () => true },
-  { id: "process", label: "En Proceso", match: (t) => t.status === "approval" || t.status === "workshop" },
+  { id: "process", label: "En Proceso", match: (t) => ["received", "approval", "workshop"].includes(t.status) },
   { id: "ready", label: "Listo para Retiro", match: (t) => t.status === "ready" },
   { id: "done", label: "Finalizado", match: (t) => t.status === "done" },
 ];
@@ -93,6 +94,7 @@ export default function Tickets() {
                   <div className="tcard__amount">
                     {t.status === "ready" && <span className="mono-label">Total pagado</span>}
                     {t.status === "done" && <span className="mono-label">Importe final</span>}
+                    {t.status === "received" && <span className="mono-label">Presupuesto</span>}
                     <strong>{formatPEN(t.total)}</strong>
                   </div>
                 )}
@@ -113,7 +115,7 @@ export default function Tickets() {
               {t.status === "approval" && (
                 <div className="tcard__actions">
                   {t.lines.length > 0 && (
-                    <Link to="/portal/asistente" className="btn btn--ghost btn--sm">
+                    <Link to={`/portal/asistente?ticket=${t.id}`} className="btn btn--ghost btn--sm">
                       <MessageSquareText size={16} aria-hidden="true" /> Revisar con el asistente
                     </Link>
                   )}

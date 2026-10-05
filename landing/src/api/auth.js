@@ -1,7 +1,7 @@
 /*
  * Cliente de autenticación del portal (spec 05).
  *
- * - Con VITE_API_URL definido llama al backend: POST /registro, POST /login, POST /recuperar.
+ * - Con VITE_API_URL definido llama al backend: POST /registro, /login, /recuperar y /restablecer.
  * - Sin VITE_API_URL usa un simulador local para trabajar el frontend sin servidor.
  *
  * Reglas: la contraseña solo viaja en el cuerpo de la petición (HTTPS en producción); el hash
@@ -25,6 +25,7 @@ export const MESSAGES = {
   invalidCredentials: "Correo o contraseña incorrectos.",
   invalidData: "Revisa los datos del formulario.",
   tooMany: "Demasiados intentos. Espera un momento antes de volver a intentar.",
+  invalidToken: "El enlace no es válido o ya expiró. Solicita uno nuevo.",
   unexpected: "Ocurrió un error inesperado. Inténtalo nuevamente.",
 };
 
@@ -44,6 +45,7 @@ export function nameFromEmail(email) {
 
 function toApiError(path, status, data) {
   if (status === 409 && path === "/registro") return new ApiError(MESSAGES.duplicateEmail, { status, field: "email", code: "duplicate_email" });
+  if (path === "/restablecer" && (status === 400 || status === 410)) return new ApiError(MESSAGES.invalidToken, { status, code: "invalid_token" });
   if (status === 401) return new ApiError(MESSAGES.invalidCredentials, { status, code: "invalid_credentials" });
   if (status === 429) return new ApiError(MESSAGES.tooMany, { status, code: "rate_limited" });
   if (status === 400 || status === 422) {
@@ -96,6 +98,10 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
         await post("/recuperar", { email: normalizeEmail(email) });
         return { ok: true };
       },
+      async resetPassword({ token, password }) {
+        await post("/restablecer", { token, password });
+        return { ok: true };
+      },
     };
   }
 
@@ -117,6 +123,12 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
     },
     async requestPasswordReset() {
       await wait(delay);
+      return { ok: true };
+    },
+    // El token "expirado" permite ver el estado de enlace inválido sin backend.
+    async resetPassword({ token }) {
+      await wait(delay);
+      if (!token || token === "expirado") throw new ApiError(MESSAGES.invalidToken, { status: 410, code: "invalid_token" });
       return { ok: true };
     },
   };

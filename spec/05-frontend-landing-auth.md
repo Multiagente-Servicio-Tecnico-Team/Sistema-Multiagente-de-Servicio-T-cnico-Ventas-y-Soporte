@@ -16,6 +16,7 @@ Diseño de referencia: Final Designs de Figma ("Landing TechFix.AI", "Registro d
 | `/portal/registro` | Registro de cuenta de cliente |
 | `/portal/acceso` | Inicio de sesión del cliente |
 | `/portal/recuperar` | Recuperar contraseña |
+| `/portal/restablecer?token=…` | Restablecer contraseña (destino del enlace enviado por correo; no estaba en Figma) |
 
 Fuera de alcance: backend, base de datos, hash, envío real de correos. Las demás pantallas del portal y del
 taller ya existentes en la rama se conservan, pero no forman parte de esta spec.
@@ -26,6 +27,10 @@ taller ya existentes en la rama se conservan, pero no forman parte de esta spec.
 - Acceso ↔ registro ↔ recuperación enlazados entre sí.
 - Una ruta protegida sin sesión redirige a `/portal/acceso` y, tras ingresar, vuelve a la ruta solicitada.
 - Registro exitoso abre sesión y lleva a `/portal/tickets`.
+- Con sesión abierta, acceso y registro redirigen al área del usuario y la landing muestra "Ir a mi portal"
+  (o "Ir al panel" para el taller) en lugar de "Iniciar sesión".
+- Recuperación → enlace con `token` → restablecer → acceso. Sin token, o con token inválido o vencido, se
+  muestra "Enlace no válido" con la opción de pedir uno nuevo.
 
 ## Validación en el cliente
 
@@ -38,6 +43,7 @@ Registro:
 
 Inicio de sesión: correo con formato válido y contraseña no vacía (la política se valida solo al registrarse).
 Recuperación: correo con formato válido; la respuesta no revela si el correo existe.
+Restablecimiento: misma política de contraseña que el registro y confirmación igual.
 
 ## Contrato con el backend (para las specs siguientes)
 
@@ -48,7 +54,8 @@ Todas las peticiones: `POST`, JSON, `credentials: "include"`.
 | --- | --- | --- | --- |
 | `/registro` | `{ nombre, email, telefono, password }` | `201 { usuario: { id, nombre, email } }` | `409` correo duplicado; `400/422` datos inválidos (opcional `field`) |
 | `/login` | `{ email, password }` | `200 { usuario: { id, nombre, email } }` + cookie de sesión HttpOnly | `401` credenciales incorrectas; `429` demasiados intentos |
-| `/recuperar` | `{ email }` | `200` siempre (no revela existencia) | `429` |
+| `/recuperar` | `{ email }` | `200` siempre (no revela existencia); envía enlace `/portal/restablecer?token=…` válido 15 min | `429` |
+| `/restablecer` | `{ token, password }` | `200`; el token queda invalidado | `400/410` token inválido, vencido o ya usado |
 
 Mensajes que muestra el frontend: 409 → error en el campo correo; 401 → "Correo o contraseña incorrectos";
 5xx o red → mensaje genérico, nunca el texto del servidor.
@@ -61,7 +68,7 @@ Mensajes que muestra el frontend: 409 → error en el campo correo; 401 → "Cor
 
 ## Criterios de aceptación
 
-1. Las cuatro pantallas reproducen los diseños de Figma y son usables de 390 px a 1440 px sin scroll horizontal.
+1. Las pantallas reproducen los diseños de Figma y son usables de 390 px a 1440 px sin scroll horizontal.
 2. Los formularios muestran errores por campo, estado de carga y error general.
 3. El contrato de peticiones está cubierto por pruebas automáticas.
 4. `npm --prefix landing test` y `npm --prefix landing run build` terminan sin errores.

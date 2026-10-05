@@ -1,22 +1,16 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, BellRing, Check, CircleCheck, Contact, KeyRound, LoaderCircle, Mail, Smartphone, X } from "lucide-react";
-import { Field, InputIcon, PasswordInput } from "../../components/ui.jsx";
+import { Link, Navigate, useNavigate } from "react-router-dom";
+import { ArrowRight, BellRing, CircleCheck, Contact, LoaderCircle, Mail, Smartphone } from "lucide-react";
+import { Field, InputIcon } from "../../components/ui.jsx";
+import PasswordFields, { isStrongPassword } from "../../components/PasswordFields.jsx";
 import { EMAIL_RE, useStore } from "../../data/store.jsx";
 import { authApi as defaultApi, MESSAGES, toE164 } from "../../api/auth.js";
 import { FormAlert } from "./Login.jsx";
 
-export const PASSWORD_RULES = [
-  { id: "len", label: "Mínimo 8 caracteres", test: (p) => p.length >= 8 },
-  { id: "upper", label: "Una mayúscula (A-Z)", test: (p) => /[A-Z]/.test(p) },
-  { id: "num", label: "Al menos un número (0-9)", test: (p) => /\d/.test(p) },
-  { id: "sym", label: "Un símbolo especial (!@#$)", test: (p) => /[^A-Za-z0-9]/.test(p) },
-];
+export { PASSWORD_RULES } from "../../components/PasswordFields.jsx";
 
 // Campos del contrato POST /registro -> campos del formulario.
 const API_FIELDS = { nombre: "name", email: "email", telefono: "phone", password: "password" };
-
-const strengthLabel =["Muy débil", "Débil", "Media", "Buena", "Fuerte"];
 
 /** Valida el formulario de registro; devuelve un objeto { campo: mensaje }. */
 export function validateRegister(form) {
@@ -24,14 +18,14 @@ export function validateRegister(form) {
   if (form.name.trim().length < 3) errors.name = "Ingresa tu nombre y apellido.";
   if (!EMAIL_RE.test(form.email.trim())) errors.email = "Ingresa un correo electrónico válido.";
   if (!/^\d{9}$/.test(form.phone.replace(/\D/g, ""))) errors.phone = "Ingresa un número móvil de 9 dígitos.";
-  if (!PASSWORD_RULES.every((r) => r.test(form.password))) errors.password = "La contraseña no cumple todos los requisitos.";
+  if (!isStrongPassword(form.password)) errors.password = "La contraseña no cumple todos los requisitos.";
   if (!form.confirm || form.confirm !== form.password) errors.confirm = "Las contraseñas no coinciden.";
   if (!form.terms) errors.terms = "Debes aceptar los términos para continuar.";
   return errors;
 }
 
 export default function Register({ api = defaultApi }) {
-  const { login } = useStore();
+  const { session, login } = useStore();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: "", email: "", prefix: "+51", phone: "", password: "", confirm: "", terms: false });
   const [errors, setErrors] = useState({});
@@ -39,9 +33,10 @@ export default function Register({ api = defaultApi }) {
   const [loading, setLoading] = useState(false);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
-  const passed = PASSWORD_RULES.filter((r) => r.test(form.password)).length;
   const emailOk = EMAIL_RE.test(form.email.trim());
-  const matches = form.confirm.length > 0 && form.confirm === form.password;
+
+  // Un cliente con sesión abierta no necesita registrarse de nuevo.
+  if (session?.role === "client" && !loading) return <Navigate to="/portal/tickets" replace />;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -115,35 +110,13 @@ export default function Register({ api = defaultApi }) {
             </div>
           </Field>
 
-          <Field
-            label="Contraseña"
-            htmlFor="reg-pass"
-            error={errors.password}
-            aside={form.password && <span className={`strength strength--${passed}`}>Seguridad: {strengthLabel[passed]}</span>}
-          >
-            <PasswordInput id="reg-pass" icon={KeyRound} autoComplete="new-password" value={form.password} onChange={set("password")} invalid={!!errors.password} />
-            <div className="meter" aria-hidden="true"><span style={{ width: `${(passed / PASSWORD_RULES.length) * 100}%` }} className={`meter__bar meter__bar--${passed}`} /></div>
-            <ul className="rules" aria-label="Requisitos de la contraseña">
-              {PASSWORD_RULES.map((r) => {
-                const ok = r.test(form.password);
-                return (
-                  <li key={r.id} className={ok ? "is-ok" : ""}>
-                    {ok ? <Check size={13} aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-                    {r.label}
-                  </li>
-                );
-              })}
-            </ul>
-          </Field>
-
-          <Field
-            label="Confirmar Contraseña"
-            htmlFor="reg-confirm"
-            error={errors.confirm}
-            aside={matches && <span className="match"><CircleCheck size={14} aria-hidden="true" /> Coinciden</span>}
-          >
-            <PasswordInput id="reg-confirm" icon={KeyRound} autoComplete="new-password" value={form.confirm} onChange={set("confirm")} invalid={!!errors.confirm} />
-          </Field>
+          <PasswordFields
+            password={form.password}
+            confirm={form.confirm}
+            onPassword={set("password")}
+            onConfirm={set("confirm")}
+            errors={errors}
+          />
 
           <div className="field">
             <label className="check">

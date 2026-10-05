@@ -47,7 +47,15 @@ export default function Recover({ api = defaultApi }) {
                 Si <strong>{email.trim()}</strong> está registrado, recibirás un enlace de restablecimiento válido durante 15 minutos.
                 Revisa también tu carpeta de spam.
               </p>
-              <button type="button" className="btn btn--ghost" onClick={() => setSent(false)}>Usar otro correo</button>
+              <div className="btn-row btn-row--start">
+                <button type="button" className="btn btn--ghost" onClick={() => setSent(false)}>Usar otro correo</button>
+                {api.mode === "mock" && (
+                  <Link to="/portal/restablecer?token=demo" className="btn btn--soft">Abrir enlace de prueba</Link>
+                )}
+              </div>
+              {api.mode === "mock" && (
+                <p className="demo-note"><Info size={14} aria-hidden="true" /> Modo demostración: no se envían correos; usa el enlace de prueba.</p>
+              )}
             </div>
           ) : (
             <>
