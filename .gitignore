@@ -10,10 +10,16 @@
 
 # Variables de entorno y credenciales
 .env
+.env.example
 
 # Caché de Python
 __pycache__/
 *.pyc
+
+info.md
+IMPLEMENTATION_LOG.md
+implementation-progress.md
+multiagent-architecture.md
 # Cobertura de pruebas
 .coverage
 
