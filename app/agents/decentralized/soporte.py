@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
+from app.rag.tools import consultar_base_conocimiento
 from langchain_core.messages import SystemMessage, AIMessage
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.tools.soporte_tools import (
@@ -26,6 +27,7 @@ soporte_tools = [
     consultar_estado_ticket,
     transferir_a_tecnico,
     transferir_a_ventas,
+    consultar_base_conocimiento,
 ]
 
 # Vinculamos las herramientas con el LLM
@@ -54,6 +56,17 @@ consulta sobre precios o cotizaciones, debes priorizar primero el
 problema técnico y utilizar transferir_a_tecnico. El agente Técnico
 se encargará posteriormente de transferir la solicitud a Ventas
 cuando corresponda.
+
+Uso de la base de conocimiento RAG:
+- Utiliza consultar_base_conocimiento cuando necesites
+  información documental para responder consultas generales.
+- Basa tus respuestas en la información recuperada.
+- No inventes información que no esté disponible.
+- Para consultar tickets, utiliza consultar_estado_ticket.
+- Para problemas que requieren diagnóstico especializado,
+  prioriza transferir_a_tecnico.
+- Para precios o cotizaciones, prioriza transferir_a_ventas.
+- No utilices RAG para inventar estados de tickets ni precios.
 """
 
 
