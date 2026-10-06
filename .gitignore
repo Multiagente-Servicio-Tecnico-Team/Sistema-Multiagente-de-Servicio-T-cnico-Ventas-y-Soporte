@@ -13,4 +13,4 @@
 
 # Caché de Python
 __pycache__/
-*.pyc
+*.pyc.coverage
