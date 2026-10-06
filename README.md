@@ -17,9 +17,86 @@ usuario y la base de datos.
 | Sesión reutilizable y contrato común del chat (`POST /api/chat`) | [`app/chat/`](app/chat/README.md) | En `main` |
 | Agente de ventas, soporte y trazas locales | `app/agents/sales.py`, `app/agents/support.py`, `app/tracing.py` | En `main` |
 | Patrón de Red Descentralizada (soporte, técnico, ventas con *handoffs*) | `app/agents/decentralized/` | En `main` |
-| Patrón Jerárquico | rama `lg-patron-jerarquico` | En desarrollo |
-| Patrón Orquestador/Supervisor | rama `alonso_orquestador` | En desarrollo |
+| Patrón Jerárquico | `app/agents/jerarquico/` en la rama `lg-patron-jerarquico` | En su rama |
+| Patrón Orquestador/Supervisor | `app/agents/orquestador/` en la rama `alonso_orquestador` | En su rama |
 | Correo transaccional (SMTP) | `app/email/` | En `main` |
+
+## Equipo y avance
+
+Estado al 2026-10-05.
+
+| Tarea | Responsable | Rama | Avance |
+| --- | --- | --- | --- |
+| Landing, registro de cuenta e inicio de sesión | SebasBazauri | `frontend` y `backend`, integradas en `main` | ✅ Completa |
+| Patrón de Red Descentralizada | Jose Saldaña | `patron-red-descentralizada`, integrada en `main` | 🟡 Agentes y herramientas listos; falta integración |
+| Patrón Jerárquico | jsalinas4 | `lg-patron-jerarquico` | 🟡 Avanzado; pendiente de integrar a `main` |
+| Patrón Orquestador/Supervisor | johstevnn | `alonso_orquestador` | 🟡 Avanzado; pendiente de integrar a `main` |
+
+### Landing, registro de cuenta e inicio de sesión — SebasBazauri
+
+- Landing, portal del cliente y panel del taller en React según los diseños de Figma, adaptados a móvil.
+- API de cuentas: `/registro`, `/login`, `/logout` y `/me` con bcrypt y PostgreSQL; colección de Postman.
+- Recuperación y restablecimiento de contraseña con enlace temporal de un solo uso.
+- Sesión reutilizable para los patrones (`SessionGuard`) y contrato común `POST /api/chat`; el asistente del portal
+  conversa con el patrón usando la sesión, sin pedir el correo.
+- Trabajo previo: agente de ventas con presupuesto `Decimal`, trazas locales y prototipo del portal.
+- Pruebas: 56 del frontend (Vitest) y 55 de cuentas, sesión y chat (pytest).
+
+### Patrón de Red Descentralizada — Jose Saldaña
+
+Hecho:
+
+- Agentes de soporte, técnico y ventas que se transfieren la conversación (*handoffs*) con límite de
+  transferencias y registro de cada una.
+- 7 herramientas `@tool`: estado del ticket, diagnóstico, cotización y transferencias entre agentes.
+- Modelo de Groq; trazas en LangSmith mediante las variables `LANGSMITH_*`.
+- 35 pruebas: unitarias, de herramientas y una de punta a punta con el modelo real.
+
+Pendiente:
+
+- Agente de almacén e inventario y uso de la base de datos (tickets y repuestos).
+- `POST /api/chat` con la sesión del inicio de sesión para conectarlo al portal.
+
+### Patrón Jerárquico — jsalinas4
+
+Hecho:
+
+- Supervisor que delega en los agentes de soporte técnico, ventas y almacén.
+- Base de conocimiento (RAG) con el manual de servicio.
+- Crea tickets y presupuestos en PostgreSQL (`tickets`, `quotes`) y calcula el presupuesto con repuestos y mano
+  de obra.
+- Modelo de Groq; trazas en LangSmith con entradas y salidas ocultas.
+- API `POST /api/chat` con página de chat propia; 60 pruebas.
+
+Pendiente:
+
+- Traer `main` a su rama y resolver los conflictos en `.env.example`, `.gitignore`, `README.md`, `app/main.py`,
+  `app/static/index.html` y `requirements.txt`.
+- Identificar al cliente con la sesión del inicio de sesión (hoy lo identifica por el correo escrito en el chat).
+- El cálculo del presupuesto es una función del agente; aún no está registrado como herramienta de LangGraph.
+
+### Patrón Orquestador/Supervisor — johstevnn
+
+Hecho:
+
+- Supervisor que orquesta los agentes de atención, técnico, ventas, almacén, cotización y confirmación.
+- Base de conocimiento (RAG) de fallas comunes.
+- Herramienta `@tool` de inventario; modelo de Groq; configuración de LangSmith.
+- Interfaz de consola y de Streamlit; 15 pruebas.
+
+Pendiente:
+
+- Traer `main` a su rama y resolver los conflictos en `.env.example`, `.gitignore`, `README.md`, `app/main.py` y
+  `requirements.txt`.
+- `POST /api/chat` con la sesión del inicio de sesión (hoy se escribe el correo en la interfaz de Streamlit).
+
+### Integración pendiente del equipo
+
+- Que los tres patrones expongan `POST /api/chat` con `SessionGuard` siguiendo [`app/chat/README.md`](app/chat/README.md),
+  para usarlos desde el portal.
+- Unificar el acceso a la base de datos: el jerárquico y el orquestador tienen cada uno su propio
+  `app/database/repository.py`.
+- Acordar una sola forma de calcular presupuestos (catálogo de prueba o repuestos de la base de datos más mano de obra).
 
 ## Arquitectura
 
