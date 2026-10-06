@@ -73,7 +73,8 @@ identidad, sin copiar ni eliminar filas. No debe repetirse en una base ya migrad
    solicitar que el cliente use un email registrado; no crear ni modificar usuarios.
 2. Consultar repuestos activos por `code` o coincidencia acotada de nombre, usando
    parámetros enlazados. Nunca ejecutar SQL generado por el modelo.
-3. Recuperar casos de los archivos Markdown en `docs/knowledge_base/`. El manual
+3. Recuperar casos de los archivos Markdown en
+   `app/agents/jerarquico/knowledge_base/`. El manual
    aporta causas, recomendaciones técnicas e identificadores candidatos; no prueba
    una falla ni define precios o stock. En sus componentes, `y` indica artículos
    requeridos y `o` alternativas de las que se debe elegir una.
@@ -97,7 +98,7 @@ usuario técnico asignado.
 ## Conocimiento RAG Markdown
 
 El recuperador carga casos desde los archivos `.md` de
-`docs/knowledge_base/`. Cada caso contiene `Diagnóstico`, `Solución` y
+`app/agents/jerarquico/knowledge_base/`. Cada caso contiene `Diagnóstico`, `Solución` y
 `Componente/Servicio` como campos estructurados; `Palabras clave` es opcional.
 Los códigos van entre acentos graves, `y` representa componentes requeridos y `o`
 representa alternativas. Los servicios también deben existir en `spare_parts` como

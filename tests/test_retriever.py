@@ -1,6 +1,6 @@
 import unittest
 
-from app.agents.retriever import MarkdownKnowledgeRetriever
+from app.agents.jerarquico.retriever import MarkdownKnowledgeRetriever
 
 
 class MarkdownKnowledgeRetrieverTests(unittest.TestCase):

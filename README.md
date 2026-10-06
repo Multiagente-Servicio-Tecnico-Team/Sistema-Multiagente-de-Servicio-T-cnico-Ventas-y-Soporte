@@ -50,7 +50,7 @@ flowchart TD
 | Agente / componente | Función |
 | --- | --- |
 | Supervisor de atención | Clasifica la intención, extrae la solicitud, solicita aclaraciones y procesa la confirmación o rechazo de la propuesta. |
-| Recuperación de conocimiento | Busca casos en los archivos `.md` de `docs/knowledge_base/` y entrega el diagnóstico, la guía técnica y referencias del catálogo al agente técnico. |
+| Recuperación de conocimiento | Busca casos en los archivos `.md` de `app/agents/jerarquico/knowledge_base/` y entrega el diagnóstico, la guía técnica y referencias del catálogo al agente técnico. |
 | Soporte técnico | Genera diagnóstico provisional y horas estimadas; restringe la selección a identificadores del manual cuando hay casos coincidentes. |
 | Almacén y logística | Resuelve identificadores contra el código/nombre del catálogo PostgreSQL y valida precio positivo y stock mediante consultas parametrizadas. |
 | Ventas | Calcula mano de obra y repuestos con `Decimal`, usando la tarifa configurada y los precios actuales de la base. |
@@ -82,7 +82,8 @@ guarda una cotización desactualizada.
 ## Base de conocimiento Markdown
 
 El recuperador lee recursivamente archivos `.md` dentro de
-[`docs/knowledge_base/`](docs/knowledge_base/). Cada caso debe declarar
+[`app/agents/jerarquico/knowledge_base/`](app/agents/jerarquico/knowledge_base/).
+Cada caso debe declarar
 `Diagnóstico`, `Solución` y `Componente/Servicio`; se recomienda añadir
 `Palabras clave`. Escribe los identificadores de catálogo entre acentos graves y
 usa `y` cuando deben consultarse todos o `o` cuando son alternativas:
@@ -124,9 +125,23 @@ propone ni guarda una cotización.
 ```text
 app/
 ├── agents/
-│   ├── graph.py             # Grafo jerárquico y flujo de agentes
-│   ├── retriever.py         # Recuperación lexical de manuales Markdown
-│   └── schemas.py           # Contratos estructurados
+│   └── jerarquico/
+│       ├── supervisor.py        # Clasificación y confirmación del cliente
+│       ├── technical_support.py # Diagnóstico estructurado
+│       ├── warehouse.py         # Validación del catálogo y stock
+│       ├── sales.py             # Cálculo y propuesta de cotización
+│       ├── persistence.py       # Persistencia y respuesta final
+│       ├── knowledge_retrieval.py
+│       ├── retriever.py         # Recuperación lexical de manuales Markdown
+│       ├── schemas.py           # Contratos estructurados
+│       ├── knowledge_base/
+│       │   └── manual_servicio.md
+│       ├── graph/
+│       │   ├── builder.py       # Ensamblaje del grafo jerárquico LangGraph
+│       │   ├── routing.py       # Enrutamiento condicional
+│       │   └── state.py         # Estado compartido del flujo
+│       └── tools/
+│           └── quotes.py        # Cálculo determinista con Decimal
 ├── database/
 │   ├── connection.py        # Conexión SQLAlchemy
 │   └── repository.py        # Consultas y persistencia
@@ -135,8 +150,7 @@ app/
 ├── main.py                  # API FastAPI y sesiones
 └── settings.py              # Configuración desde entorno
 docs/
-└── knowledge_base/
-    └── manual_servicio.md   # Casos y referencias editables del catálogo
+└── implementation-progress.md
 sql/
 └── migrate_spanish_schema_to_english.sql
 tests/

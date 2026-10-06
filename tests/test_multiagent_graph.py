@@ -2,14 +2,15 @@ import unittest
 from dataclasses import replace
 from decimal import Decimal
 
-from app.agents.graph import build_multiagent_graph, calculate_quote
-from app.agents.retriever import MarkdownKnowledgeRetriever
-from app.agents.schemas import (
+from app.agents.jerarquico.graph.builder import build_multiagent_graph
+from app.agents.jerarquico.retriever import MarkdownKnowledgeRetriever
+from app.agents.jerarquico.schemas import (
     IntakeDecision,
     PartRequest,
     QuoteConfirmation,
     TechnicalDiagnosis,
 )
+from app.agents.jerarquico.tools.quotes import calculate_quote
 from app.settings import Settings
 
 
@@ -169,6 +170,21 @@ def invoke(
 
 
 class MultiagentGraphTests(unittest.TestCase):
+    def test_hierarchical_package_exports_public_graph_api(self):
+        from app.agents.jerarquico import (
+            build_multiagent_graph as package_builder,
+            calculate_quote as package_calculator,
+        )
+        from app.agents.jerarquico.graph.builder import (
+            build_multiagent_graph as current_builder,
+        )
+        from app.agents.jerarquico.tools.quotes import (
+            calculate_quote as current_calculator,
+        )
+
+        self.assertIs(package_builder, current_builder)
+        self.assertIs(package_calculator, current_calculator)
+
     def test_intake_schema_accepts_provider_response_above_previous_limit(self):
         long_response = "Recomendación paso a paso. " * 100
         decision = IntakeDecision(

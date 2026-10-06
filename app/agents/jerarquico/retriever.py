@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-KNOWLEDGE_BASE_PATH = Path(__file__).parents[2] / "docs" / "knowledge_base"
+KNOWLEDGE_BASE_PATH = Path(__file__).parent / "knowledge_base"
 _CASE_PATTERN = re.compile(
     r"(?m)^\s*(?:[-*]\s*)?\*\*Caso\s+(\d+):\s*(.*?)\*\*\s*$"
     r"|^\s*#{2,4}\s+Caso\s+(\d+):\s*(.*?)\s*$",

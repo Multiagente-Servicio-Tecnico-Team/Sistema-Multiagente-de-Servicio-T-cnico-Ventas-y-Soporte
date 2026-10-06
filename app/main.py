@@ -18,7 +18,7 @@ from langsmith import Client, tracing_context
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.agents.graph import build_multiagent_graph
+from app.agents.jerarquico.graph.builder import build_multiagent_graph
 from app.settings import load_settings
 
 
