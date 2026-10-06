@@ -1,291 +1,221 @@
-# Sistema multiagente de servicio técnico, ventas y soporte
+# Sistema Multiagente de Servicio Técnico, Ventas y Soporte
 
-Aplicación de chat en español construida con FastAPI y LangGraph. Un supervisor
-coordina agentes especializados para evaluar fallas, consultar inventario en
-PostgreSQL y presentar cotizaciones. Groq proporciona el modelo de lenguaje y
-LangSmith registra trazas de ejecución.
+TechFix.AI: plataforma para un taller de reparación de equipos. El cliente se registra, inicia sesión y conversa
+con agentes LangGraph que diagnostican la falla, consultan repuestos y preparan un presupuesto; el taller atiende
+los tickets que se generan.
 
-## Arquitectura jerárquica
+El proyecto compara tres patrones multiagente con LangGraph, con herramientas y trazabilidad en LangSmith:
+**Orquestador/Supervisor**, **Jerárquico** y **Red Descentralizada**. Todos comparten el frontend, las cuentas de
+usuario y la base de datos.
 
-El supervisor de atención es el punto de coordinación. Decide si debe pedir
-aclaraciones, responder una consulta informativa o derivar una solicitud técnica.
-Los nodos especialistas realizan tareas acotadas y devuelven resultados al flujo
-controlado por el supervisor.
+## Módulos
 
-```mermaid
-flowchart TD
-    Cliente["Cliente / chat web"] --> API["FastAPI"]
-    API --> Supervisor["Supervisor de atención"]
+| Módulo | Carpeta | Estado |
+| --- | --- | --- |
+| Landing, portal del cliente y panel del taller (React) | [`landing/`](landing/README.md) | En `main` |
+| Cuentas: registro, inicio de sesión, recuperación de contraseña | [`app/accounts/`](app/accounts/README.md) | En `main` |
+| Sesión reutilizable y contrato común del chat (`POST /api/chat`) | [`app/chat/`](app/chat/README.md) | En `main` |
+| Agente de ventas, soporte y trazas locales | `app/agents/sales.py`, `app/agents/support.py`, `app/tracing.py` | En `main` |
+| Patrón de Red Descentralizada (soporte, técnico, ventas con *handoffs*) | `app/agents/decentralized/` | En `main` |
+| Patrón Jerárquico | `app/agents/jerarquico/` en la rama `lg-patron-jerarquico` | En su rama |
+| Patrón Orquestador/Supervisor | `app/agents/orquestador/` en la rama `alonso_orquestador` | En su rama |
+| Correo transaccional (SMTP) | `app/email/` | En `main` |
 
-    Supervisor -->|Faltan datos| Aclaracion["Solicitar aclaración"]
-    Supervisor -->|Consulta general| Informacion["Respuesta informativa"]
-    Supervisor -->|Falla técnica| RAG["Recuperación de manuales Markdown"]
+## Equipo y avance
 
-    subgraph Especialistas["Agentes y servicios especializados"]
-        direction TD
-        RAG --> Tecnico["Agente de soporte técnico"]
-        Tecnico --> Almacen["Agente de almacén y logística"]
-        Almacen --> Ventas["Agente de ventas"]
-    end
+Estado al 2026-10-05.
 
-    Almacen <-->|Consultar producto, precio y stock| PostgreSQL[("PostgreSQL")]
-    Ventas --> Propuesta["Propuesta indicativa"]
-    Propuesta --> Cliente
-    Cliente -->|Confirmación| API
-    API --> Supervisor
-    Supervisor -->|Revalidar propuesta| Almacen
-    Ventas -->|Datos confirmados| Persistencia["Persistencia transaccional"]
-    Persistencia --> PostgreSQL
-    Persistencia --> Respuesta["Ticket y cotización guardados"]
-    Respuesta --> Cliente
+| Tarea | Responsable | Rama | Avance |
+| --- | --- | --- | --- |
+| Landing, registro de cuenta e inicio de sesión | SebasBazauri | `frontend` y `backend`, integradas en `main` | ✅ Completa |
+| Patrón de Red Descentralizada | Jose Saldaña | `patron-red-descentralizada`, integrada en `main` | 🟡 Agentes y herramientas listos; falta integración |
+| Patrón Jerárquico | jsalinas4 | `lg-patron-jerarquico` | 🟡 Avanzado; pendiente de integrar a `main` |
+| Patrón Orquestador/Supervisor | johstevnn | `alonso_orquestador` | 🟡 Avanzado; pendiente de integrar a `main` |
 
-    Supervisor -. "Clasificación y confirmación" .-> Groq["Groq"]
-    Tecnico -. "Diagnóstico estructurado" .-> Groq
-    Supervisor -.-> LangSmith["LangSmith"]
-    Tecnico -.-> LangSmith
+### Landing, registro de cuenta e inicio de sesión — SebasBazauri
+
+- Landing, portal del cliente y panel del taller en React según los diseños de Figma, adaptados a móvil.
+- API de cuentas: `/registro`, `/login`, `/logout` y `/me` con bcrypt y PostgreSQL; colección de Postman.
+- Recuperación y restablecimiento de contraseña con enlace temporal de un solo uso.
+- Sesión reutilizable para los patrones (`SessionGuard`) y contrato común `POST /api/chat`; el asistente del portal
+  conversa con el patrón usando la sesión, sin pedir el correo.
+- Trabajo previo: agente de ventas con presupuesto `Decimal`, trazas locales y prototipo del portal.
+- Pruebas: 56 del frontend (Vitest) y 55 de cuentas, sesión y chat (pytest).
+
+### Patrón de Red Descentralizada — Jose Saldaña
+
+Hecho:
+
+- Agentes de soporte, técnico y ventas que se transfieren la conversación (*handoffs*) con límite de
+  transferencias y registro de cada una.
+- 7 herramientas `@tool`: estado del ticket, diagnóstico, cotización y transferencias entre agentes.
+- Modelo de Groq; trazas en LangSmith mediante las variables `LANGSMITH_*`.
+- 35 pruebas: unitarias, de herramientas y una de punta a punta con el modelo real.
+
+Pendiente:
+
+- Agente de almacén e inventario y uso de la base de datos (tickets y repuestos).
+- `POST /api/chat` con la sesión del inicio de sesión para conectarlo al portal.
+
+### Patrón Jerárquico — jsalinas4
+
+Hecho:
+
+- Supervisor que delega en los agentes de soporte técnico, ventas y almacén.
+- Base de conocimiento (RAG) con el manual de servicio.
+- Crea tickets y presupuestos en PostgreSQL (`tickets`, `quotes`) y calcula el presupuesto con repuestos y mano
+  de obra.
+- Modelo de Groq; trazas en LangSmith con entradas y salidas ocultas.
+- API `POST /api/chat` con página de chat propia; 60 pruebas.
+
+Pendiente:
+
+- Traer `main` a su rama y resolver los conflictos en `.env.example`, `.gitignore`, `README.md`, `app/main.py`,
+  `app/static/index.html` y `requirements.txt`.
+- Identificar al cliente con la sesión del inicio de sesión (hoy lo identifica por el correo escrito en el chat).
+- El cálculo del presupuesto es una función del agente; aún no está registrado como herramienta de LangGraph.
+
+### Patrón Orquestador/Supervisor — johstevnn
+
+Hecho:
+
+- Supervisor que orquesta los agentes de atención, técnico, ventas, almacén, cotización y confirmación.
+- Base de conocimiento (RAG) de fallas comunes.
+- Herramienta `@tool` de inventario; modelo de Groq; configuración de LangSmith.
+- Interfaz de consola y de Streamlit; 15 pruebas.
+
+Pendiente:
+
+- Traer `main` a su rama y resolver los conflictos en `.env.example`, `.gitignore`, `README.md`, `app/main.py` y
+  `requirements.txt`.
+- `POST /api/chat` con la sesión del inicio de sesión (hoy se escribe el correo en la interfaz de Streamlit).
+
+### Integración pendiente del equipo
+
+- Que los tres patrones expongan `POST /api/chat` con `SessionGuard` siguiendo [`app/chat/README.md`](app/chat/README.md),
+  para usarlos desde el portal.
+- Unificar el acceso a la base de datos: el jerárquico y el orquestador tienen cada uno su propio
+  `app/database/repository.py`.
+- Acordar una sola forma de calcular presupuestos (catálogo de prueba o repuestos de la base de datos más mano de obra).
+
+## Arquitectura
+
+```text
+ Navegador (React + Vite, landing/)
+   │  registro, inicio de sesión, recuperación        │  chat del portal (/portal/asistente)
+   ▼                                                  ▼
+ API de cuentas (app/accounts) ── cookie de sesión ──▶ API del patrón: POST /api/chat
+   │  bcrypt, tokens de recuperación                   │  SessionGuard identifica al cliente por la cookie
+   ▼                                                  ▼
+ PostgreSQL: users · recovery_tokens · tickets · quotes · spare_parts …   ◀── grafo LangGraph del patrón
+                                                                             │ herramientas · LangSmith
 ```
 
-## Agentes y responsabilidades
-
-| Agente / componente | Función |
-| --- | --- |
-| Supervisor de atención | Clasifica la intención, extrae la solicitud, solicita aclaraciones y procesa la confirmación o rechazo de una cotización o ticket técnico. |
-| Recuperación de conocimiento | Busca casos en los archivos `.md` de `app/agents/jerarquico/knowledge_base/` y entrega el diagnóstico, la guía técnica y referencias del catálogo al agente técnico. |
-| Soporte técnico | Genera un diagnóstico provisional y clasifica el trabajo como diagnóstico si la causa sigue sin identificarse, o como mantenimiento si la tarea ya está determinada. |
-| Almacén y logística | Resuelve identificadores contra el código/nombre del catálogo PostgreSQL y valida precio positivo y stock mediante consultas parametrizadas. |
-| Ventas | Aplica un precio fijo de mano de obra según la tarea y suma los precios actuales de los repuestos validados en PostgreSQL. |
-| Persistencia | Guarda ticket, cotización y detalles en una transacción; los diagnósticos sin repuestos documentados pueden guardar una cotización que cubre solo la mano de obra diagnóstica. |
-
-El LLM no genera SQL ni determina los precios finales. La disponibilidad de un
-repuesto se confirma desde PostgreSQL. Si no hay una coincidencia exacta, busca
-opciones de la misma familia usando el prefijo del identificador del manual, por
-ejemplo `SSD` en `SSD_1TB`. Una única opción disponible puede presentarse como
-alternativa sujeta a confirmar compatibilidad; si hay varias, el chat muestra
-stock y precio para que se aclare cuál revisar. Sin stock suficiente no se genera
-cotización.
-
-## Flujo de servicio
-
-1. El cliente envía su email registrado y describe el equipo y la falla.
-2. El supervisor verifica que exista un cliente activo con rol `CUSTOMER`.
-3. La recuperación busca síntomas en los casos Markdown y aporta guías técnicas y
-   códigos candidatos; `y` requiere los artículos indicados y `o` obliga a elegir
-   exactamente una alternativa.
-4. El agente técnico presenta un diagnóstico provisional y determina si hay un
-   caso documentado en el manual. No estima horas ni precios.
-5. Si la causa exacta no está identificada —aunque exista una guía con causas
-   posibles— el sistema no cotiza candidatos de repuestos: ofrece abrir un ticket
-   y un presupuesto de diagnóstico por S/ 50, con repuestos en S/ 0. Si el trabajo
-   o cambio de componente ya está determinado, almacén valida precio y stock en
-   PostgreSQL y ventas aplica S/ 40 fijos más los repuestos confirmados.
-6. El chat presenta la propuesta sin crear registros en PostgreSQL.
-7. Si el cliente confirma, se vuelve a comprobar inventario y precio. Si cambió la
-   propuesta, se muestran los importes actualizados y se solicita confirmación otra
-   vez.
-8. Con una confirmación vigente se guardan ticket, cotización y detalles dentro de
-   una transacción. Una respuesta negativa no genera escrituras.
-9. En los casos de diagnóstico, el mensaje indica que se creará el ticket, muestra
-   S/ 50 de mano de obra, S/ 0 de repuestos y pide confirmación. Solo tras el sí se
-   guardan ticket y cotización; al persistir no se insertan filas en `quote_details`.
-
-## Base de conocimiento Markdown
-
-El recuperador lee recursivamente archivos `.md` dentro de
-[`app/agents/jerarquico/knowledge_base/`](app/agents/jerarquico/knowledge_base/).
-Cada caso debe declarar
-`Diagnóstico`, `Solución` y `Componente/Servicio`; se recomienda añadir
-`Palabras clave`. Escribe los identificadores de catálogo entre acentos graves y
-usa `y` cuando deben consultarse todos o `o` cuando son alternativas:
-
-```markdown
-- **Caso 10: Ejemplo de incidencia**
-  - **Diagnóstico**: Causa posible que debe verificarse.
-  - **Solución**: Referencia técnica para revisar y corregir la incidencia.
-  - **Componente/Servicio**: `Servicio_Diagnostico` o `REP-EJEMPLO`.
-  - **Palabras clave**: síntoma, equipo, incidencia
-```
-
-El manual incluye un caso para laptops lentas que tardan en abrir aplicaciones y
-referencia `SSD_1TB` como candidato sujeto a revisión técnica, compatibilidad,
-precio y stock. Cuando no se recupera un caso coincidente, el flujo no sugiere
-piezas y ofrece una cotización únicamente por diagnóstico.
-
-Cada identificador se busca como código o como parte del nombre en
-`spare_parts`. Registra también los servicios como artículos activos del catálogo
-con stock suficiente y un precio positivo. El Markdown no crea ni modifica
-registros de PostgreSQL, no es fuente de precios y no sustituye la validación de
-compatibilidad, inventario y tarifa. Si falta el mapeo del catálogo, no se genera
-una cotización.
-
-Los manuales Markdown no contienen tarifas: aportan conocimiento técnico y
-referencias del catálogo. Los totales se calculan con los importes fijos
-`LABOR_MAINTENANCE_PRICE` o `LABOR_DIAGNOSIS_PRICE` y precios positivos vigentes
-de PostgreSQL. Si hay varias alternativas de catálogo, se muestran al cliente sin
-elegir una automáticamente; si no hay stock suficiente o el precio es cero, no se
-genera cotización de mantenimiento. Si no se puede determinar la causa exacta,
-se puede cotizar únicamente el diagnóstico fijo, incluso si una guía relacionada
-solo ofrece causas posibles; no se incluyen repuestos hasta que el técnico
-determine la reparación.
-
-## Tecnologías
-
-- Python 3.10+
-- FastAPI y Uvicorn
-- LangGraph y LangChain
-- Groq
-- LangSmith
-- PostgreSQL con SQLAlchemy y `pg8000`
-- Pydantic
-- `unittest`
+- La identidad del cliente sale siempre de la cookie firmada; el chat nunca pide el correo.
+- Cada patrón expone el mismo `POST /api/chat`, así el frontend funciona con cualquiera de ellos. La guía para
+  conectar un patrón está en [`app/chat/README.md`](app/chat/README.md).
 
 ## Estructura
 
 ```text
 app/
+├── accounts/        API de cuentas (FastAPI): /registro, /login, /logout, /me, /recuperar, /restablecer
+├── chat/            Contrato de /api/chat, patrón de referencia y modelo de tickets
 ├── agents/
-│   └── jerarquico/
-│       ├── supervisor.py        # Clasificación y confirmación del cliente
-│       ├── technical_support.py # Diagnóstico estructurado
-│       ├── warehouse.py         # Validación del catálogo y stock
-│       ├── sales.py             # Cálculo y propuesta de cotización
-│       ├── persistence.py       # Persistencia y respuesta final
-│       ├── knowledge_retrieval.py
-│       ├── retriever.py         # Recuperación lexical de manuales Markdown
-│       ├── schemas.py           # Contratos estructurados
-│       ├── knowledge_base/
-│       │   └── manual_servicio.md
-│       ├── graph/
-│       │   ├── builder.py       # Ensamblaje del grafo jerárquico LangGraph
-│       │   ├── routing.py       # Enrutamiento condicional
-│       │   └── state.py         # Estado compartido del flujo
-│       └── tools/
-│           └── quotes.py        # Cálculo determinista con Decimal
-├── database/
-│   ├── connection.py        # Conexión SQLAlchemy
-│   └── repository.py        # Consultas y persistencia
-├── static/
-│   └── index.html           # Interfaz web de chat
-├── main.py                  # API FastAPI y sesiones
-└── settings.py              # Configuración desde entorno
-docs/
-└── implementation-progress.md
-sql/
-└── migrate_spanish_schema_to_english.sql
-tests/
+│   ├── sales.py     Agente de ventas: presupuesto con el catálogo de prueba (Decimal)
+│   ├── support.py   Grafo de soporte del prototipo del portal
+│   └── decentralized/  Red descentralizada: agentes, herramientas y grafo
+├── database/        Conexión SQLAlchemy a PostgreSQL
+├── email/           Servicio SMTP y plantillas
+├── main.py          Prototipo del portal (usuarios en variable de entorno)
+└── tracing.py       Trazas locales JSONL sin contenido de los mensajes
+landing/             Frontend React 18 + Vite
+postman/             Colección de la API de cuentas
+tests/               Pruebas automáticas (pytest)
 ```
 
-## Requisitos y configuración
+## Requisitos
 
-Se requiere Python 3.10 o posterior, PostgreSQL accesible con el esquema esperado,
-una clave de Groq y un cliente activo registrado con rol `CUSTOMER`. Para activar
-trazas también se requiere una clave de LangSmith. La aplicación no crea usuarios
-ni instala o migra el esquema automáticamente.
+- Python 3.12
+- Node.js 18 o superior
+- PostgreSQL 16 con las tablas del script del equipo (`creacion_tablas_sin_inserciones.sql`)
+- Claves de Groq y LangSmith para los patrones con LLM
 
-Desde la raíz del repositorio, crea el entorno virtual e instala dependencias:
+## Configuración
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+Copiar `.env.example` a `.env` y completar:
+
+| Variable | Uso |
+| --- | --- |
+| `DATABASE_URL` | `postgresql+pg8000://USUARIO:CLAVE@localhost:5432/techfix` |
+| `AUTH_SECRET` | Secreto para firmar la cookie; el mismo en la API de cuentas y en la del patrón |
+| `AUTH_SECURE_COOKIE` | `false` solo en `localhost` sin HTTPS |
+| `FRONTEND_ORIGINS`, `FRONTEND_URL` | Origen del frontend (`http://localhost:5173`) |
+| `MAIL_MODE` | `outbox` guarda los correos en `OUTBOX_DIR`; `smtp` usa las variables `SMTP_*` |
+| `GROQ_API_KEY` | Modelo de los agentes de los patrones |
+| `LANGSMITH_API_KEY`, `LANGSMITH_TRACING`, `LANGSMITH_PROJECT` | Trazabilidad en LangSmith |
+
+El frontend usa `landing/.env` (ver `landing/.env.example`): `VITE_API_URL` para la API de cuentas y
+`VITE_CHAT_URL` para el patrón del chat. Sin ellas funciona en modo demostración.
+
+## Puesta en marcha
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt -r requirements-auth.txt
 ```
 
-Configura las siguientes variables localmente en `.env`:
-
-```dotenv
-GROQ_API_KEY=tu_clave_groq
-GROQ_MODEL=openai/gpt-oss-20b
-DATABASE_URL=postgresql+pg8000://usuario:contraseña@localhost:5432/base
-LABOR_MAINTENANCE_PRICE=40.00
-LABOR_DIAGNOSIS_PRICE=50.00
-
-LANGSMITH_API_KEY=tu_clave_langsmith
-LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=agente-tecnico
-LANGSMITH_HIDE_INPUTS=true
-LANGSMITH_HIDE_OUTPUTS=true
+```bash
+.venv/Scripts/python -m uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
 ```
 
-`LABOR_MAINTENANCE_PRICE` y `LABOR_DIAGNOSIS_PRICE` son precios fijos en soles
-peruanos (PEN); el primero cubre mantenimiento/cambio de partes y el segundo el
-diagnóstico cuando todavía no se identifica la falla. El esquema de base de datos
-guarda el importe, pero no una columna de moneda ni una tabla de tarifas. No subas
-`.env` ni publiques sus claves.
-
-## Ejecución local
-
-Con el entorno virtual activo y `.env` configurado:
-
-```powershell
-python -m uvicorn app.main:app --reload
+```bash
+.venv/Scripts/python -m uvicorn app.chat.reference:create_reference_app --factory --host localhost --port 8001
 ```
 
-Abre <http://127.0.0.1:8000>. Ingresa el email de un cliente activo registrado y
-describe la falla, por ejemplo: `Mi laptop está lenta y demora en arrancar`.
-Revisa la propuesta; responde `sí` para guardar o `no` para cancelar. Detén el
-servidor con `Ctrl+C`.
+```bash
+npm --prefix landing install
+```
+
+```bash
+npm --prefix landing run dev
+```
+
+Abrir http://localhost:5173. Usar `localhost` (no `127.0.0.1`) en todas las URLs para que el navegador envíe la
+cookie de sesión a ambas APIs. El puerto 8001 sirve el patrón de referencia; cada patrón del equipo lo reemplaza
+con su propia API.
 
 ## Pruebas
 
-```powershell
-python -m unittest discover -s tests -v
+```bash
+npm --prefix landing test
 ```
 
-La suite cubre la API, el flujo del grafo, recuperación RAG, confirmación,
-revalidación de precios/stock y transacciones con dependencias simuladas. No crea
-cotizaciones de prueba en PostgreSQL.
-
-## API
-
-### `GET /`
-
-Sirve la interfaz web.
-
-### `POST /api/chat`
-
-Envía un mensaje al hilo identificado por un UUID opaco.
-
-```json
-{
-  "session_id": "2e1c1289-37b8-48ad-8520-74d8a05f7e2c",
-  "email": "cliente@example.com",
-  "message": "Mi laptop está lenta y demora en arrancar"
-}
+```bash
+.venv/Scripts/python -m pytest tests --ignore=tests/test_database.py --ignore=tests/test_email.py
 ```
 
-La respuesta incluye `answer` y `outcome`. Antes de confirmar, puede incluir una
-cotización indicativa; `ticket_id`, `ticket_code` y `quote_id` solo se entregan
-cuando los registros se guardaron correctamente.
+- `tests/test_database.py` y `tests/test_email.py` son scripts manuales que conectan a PostgreSQL y SMTP reales.
+- Las pruebas de la red descentralizada necesitan `GROQ_API_KEY` definida; `tests/test_e2e_decentralized.py`
+  llama al modelo real.
+- API de cuentas con Postman o Newman: `npx newman run postman/techfix-auth.postman_collection.json`.
 
-## Trazabilidad y privacidad
+## Seguridad
 
-Con `LANGSMITH_TRACING=true`, las ejecuciones se envían al proyecto configurado. La
-metadata usa un ID de sesión opaco, no el email. `LANGSMITH_HIDE_INPUTS` y
-`LANGSMITH_HIDE_OUTPUTS` están activados por defecto. Los detalles de errores del
-proveedor se redactan antes de enviar la traza; el log local registra el tipo de
-error.
+- Contraseñas con bcrypt; nunca se guardan, devuelven ni registran en texto plano.
+- Sesión en cookie `HttpOnly` y `SameSite=Lax`, firmada; restablecer la contraseña cierra las sesiones abiertas.
+- Importes con `Decimal`; los precios salen del catálogo de prueba.
+- Las trazas y los registros no guardan mensajes, credenciales ni textos de excepciones.
 
-## Despliegue y operación
+## Contribuir
 
-La aplicación se ejecuta como servicio ASGI con Uvicorn. El comando de desarrollo
-local es:
+- Una rama por tarea y Pull Request hacia `main`; no subir directamente a `main`.
+- Mensajes con *conventional commits*: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`.
+- Antes de abrir el PR: traer `main` a la rama, resolver conflictos y pasar las pruebas.
 
-```powershell
-python -m uvicorn app.main:app --reload
-```
+## Limitaciones actuales
 
-Para un proceso Uvicorn sin recarga automática, el comando es:
-
-```text
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-La configuración de PostgreSQL, Groq, LangSmith y tarifa se proporciona mediante
-variables de entorno. El estado conversacional se conserva en memoria del proceso
-y desaparece al reiniciarlo; el servicio no persiste sesiones ni comparte estado
-entre varias instancias.
-
-El email identifica un registro de cliente y **no autentica** a la persona. El
-servicio está destinado a pruebas locales; no lo expongas a una red pública con el
-flujo de identificación actual.
+- Los patrones Jerárquico y Orquestador aún no están en `main` ni usan la sesión del inicio de sesión.
+- La Red Descentralizada todavía no expone `POST /api/chat`.
+- Tickets, inventario y "Mis Tickets" del frontend usan datos de demostración.
+- Conversaciones y límites de intentos viven en la memoria del proceso (una sola instancia).
