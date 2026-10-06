@@ -261,3 +261,234 @@ def test_error_herramienta():
     assert mensaje.status == "error"
     assert mensaje.tool_call_id == "call-test"
     assert "RuntimeError" in mensaje.content
+
+# PRUEBAS DEL CONTEXTO DE VENTAS
+
+from langchain_core.messages import HumanMessage
+
+from app.agents.decentralized.ventas import (
+    construir_contexto_ventas,
+)
+
+
+# TEST 11: CONSERVAR MENSAJES DEL USUARIO
+def test_ventas_contexto_usuario():
+    estado = {
+        "messages": [
+            HumanMessage(content="Quiero una cotización")
+        ]
+    }
+
+    contexto = construir_contexto_ventas(estado)
+
+    assert len(contexto) == 1
+    assert isinstance(contexto[0], HumanMessage)
+
+
+# TEST 12: CONSERVAR HERRAMIENTAS DE VENTAS
+def test_ventas_contexto_cotizacion():
+    llamada = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "generar_cotizacion",
+                "args": {"servicio": "reparacion"},
+                "id": "call-ventas",
+            }
+        ],
+    )
+
+    resultado = ToolMessage(
+        content="Precio estimado: S/ 120",
+        name="generar_cotizacion",
+        tool_call_id="call-ventas",
+    )
+
+    estado = {
+        "messages": [llamada, resultado]
+    }
+
+    contexto = construir_contexto_ventas(estado)
+
+    assert len(contexto) == 2
+    assert contexto[0] == llamada
+    assert contexto[1] == resultado
+
+
+# TEST 13: EXCLUIR TRANSFERENCIAS DE SOPORTE
+def test_ventas_excluir_handoff_soporte():
+    llamada = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "transferir_a_ventas",
+                "args": {"motivo": "Cotización"},
+                "id": "call-soporte",
+            }
+        ],
+    )
+
+    resultado = ToolMessage(
+        content="TRANSFERIR_VENTAS: Cotización",
+        name="transferir_a_ventas",
+        tool_call_id="call-soporte",
+    )
+
+    estado = {
+        "messages": [llamada, resultado]
+    }
+
+    contexto = construir_contexto_ventas(estado)
+
+    assert contexto == []
+
+
+# TEST 14: CONSERVAR DIAGNÓSTICO TÉCNICO
+def test_ventas_contexto_diagnostico():
+    diagnostico = ToolMessage(
+        content="Posible falla en la fuente",
+        name="diagnosticar_problema",
+        tool_call_id="call-tecnico",
+    )
+
+    estado = {
+        "messages": [diagnostico]
+    }
+
+    contexto = construir_contexto_ventas(estado)
+
+    assert len(contexto) == 1
+    assert isinstance(contexto[0], HumanMessage)
+    assert "Diagnóstico técnico previo" in contexto[0].content
+    assert "fuente" in contexto[0].content
+
+
+# TEST 15: EXCLUIR MENSAJES INTERNOS
+def test_ventas_excluir_mensajes_internos():
+    estado = {
+        "messages": [
+            AIMessage(content="Mensaje interno"),
+            ToolMessage(
+                content="Resultado ajeno",
+                name="herramienta_ajena",
+                tool_call_id="call-ajena",
+            ),
+        ]
+    }
+
+    contexto = construir_contexto_ventas(estado)
+
+    assert contexto == []
+
+
+# PRUEBAS ADICIONALES DEL GRAFO
+from app.agents.decentralized.graph import (
+    auditar_soporte,
+    auditar_tecnico,
+    auditar_ventas,
+)
+
+
+# TEST 16: SIN RESULTADOS DE HERRAMIENTAS
+def test_detectar_handoff_sin_tools():
+    mensajes = [
+        AIMessage(content="Respuesta normal")
+    ]
+
+    assert detectar_handoff(mensajes) is None
+
+
+# TEST 17: TRANSFERENCIA CON ERROR
+def test_detectar_handoff_error():
+    mensajes = [
+        ToolMessage(
+            content="Error de herramienta",
+            name="transferir_a_tecnico",
+            tool_call_id="error-1",
+            status="error",
+        )
+    ]
+
+    assert detectar_handoff(mensajes) is None
+
+
+# TEST 18: HERRAMIENTA DESCONOCIDA
+def test_detectar_handoff_desconocido():
+    mensajes = [
+        ToolMessage(
+            content="Resultado",
+            name="herramienta_desconocida",
+            tool_call_id="unknown-1",
+        )
+    ]
+
+    assert detectar_handoff(mensajes) is None
+
+
+# TEST 19: TRANSFERENCIA AL MISMO AGENTE
+def test_handoff_mismo_agente():
+    estado = {
+        "messages": [
+            ToolMessage(
+                content="Transferencia",
+                name="transferir_a_tecnico",
+                tool_call_id="same-1",
+            )
+        ],
+        "handoff_count": 0,
+        "handoff_history": [],
+        "errors": [],
+    }
+
+    resultado = registrar_handoff(estado, "tecnico")
+
+    assert resultado["next_agent"] == "finalizar"
+    assert "Transferencia al mismo agente" in resultado["errors"]
+
+
+# TEST 20: CONTINUAR SIN HANDOFF
+def test_registrar_sin_handoff():
+    estado = {
+        "messages": [
+            AIMessage(content="Respuesta normal")
+        ]
+    }
+
+    resultado = registrar_handoff(estado, "soporte")
+
+    assert resultado["next_agent"] == "soporte"
+
+
+# TEST 21: AUDITORÍA DE SOPORTE
+def test_auditar_soporte():
+    estado = {"messages": []}
+
+    resultado = auditar_soporte(estado)
+
+    assert resultado["next_agent"] == "soporte"
+
+
+# TEST 22: AUDITORÍA DE TÉCNICO
+def test_auditar_tecnico():
+    estado = {"messages": []}
+
+    resultado = auditar_tecnico(estado)
+
+    assert resultado["next_agent"] == "tecnico"
+
+
+# TEST 23: AUDITORÍA DE VENTAS
+def test_auditar_ventas():
+    estado = {"messages": []}
+
+    resultado = auditar_ventas(estado)
+
+    assert resultado["next_agent"] == "ventas"
+
+
+# TEST 24: DESTINO NO DEFINIDO
+def test_route_next_agent_default():
+    estado = {"messages": []}
+
+    assert route_next_agent(estado) == "finalizar"
+
