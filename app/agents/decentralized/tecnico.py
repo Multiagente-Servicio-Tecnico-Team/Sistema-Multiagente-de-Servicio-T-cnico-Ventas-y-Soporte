@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+from app.rag.tools import consultar_base_conocimiento
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, AIMessage
 from app.agents.decentralized.state import AgentState
@@ -27,8 +28,8 @@ llm = ChatGroq(
 tecnico_tools = [
     diagnosticar_problema,
     transferir_a_ventas,
+    consultar_base_conocimiento,
 ]
-
 
 # Vinculamos las herramientas con el LLM
 tecnico_llm = llm.bind_tools(tecnico_tools)
@@ -63,6 +64,17 @@ REGLA OBLIGATORIA PARA SOLICITUDES MIXTAS:
   continúe pendiente.
 - Si el diagnóstico ya aparece en el historial, no vuelvas a ejecutar
   diagnosticar_problema. Ejecuta transferir_a_ventas.
+
+  Uso de la base de conocimiento RAG:
+- Utiliza consultar_base_conocimiento para recuperar
+  información documental sobre problemas técnicos.
+- Basa tus recomendaciones en el conocimiento recuperado.
+- Utiliza diagnosticar_problema cuando corresponda
+  realizar un diagnóstico.
+- No inventes diagnósticos ni procedimientos.
+- Si el usuario solicita una cotización, utiliza
+  transferir_a_ventas.
+  
 """
 
 

@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
+from app.rag.tools import consultar_base_conocimiento
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage,
@@ -38,6 +39,7 @@ llm = ChatGroq(
 ventas_tools = [
     generar_cotizacion,
     transferir_a_tecnico,
+    consultar_base_conocimiento,
 ]
 
 ventas_llm = llm.bind_tools(ventas_tools)
@@ -72,6 +74,21 @@ REGLAS:
 - Si generar_cotizacion ya devolvió un precio
   para la solicitud actual, responde con ese
   resultado y no vuelvas a ejecutar la herramienta.
+
+Uso de la base de conocimiento RAG:
+- Consulta consultar_base_conocimiento únicamente cuando
+  necesites información documental sobre los servicios.
+- Realiza como máximo una consulta RAG por solicitud.
+- Si ya existe un resultado de consultar_base_conocimiento
+  en la conversación, utiliza esa información para responder.
+- No vuelvas a consultar RAG para obtener información
+  que ya fue recuperada.
+- Después de recibir información suficiente de RAG,
+  responde directamente al usuario.
+- Para precios y cotizaciones utiliza exclusivamente
+  generar_cotizacion.
+- Si necesitas diagnóstico técnico, transfiere a Técnico.
+
 """
 
 
@@ -100,6 +117,7 @@ def construir_contexto_ventas(state: AgentState):
     nombres_tools = {
         "generar_cotizacion",
         "transferir_a_tecnico",
+        "consultar_base_conocimiento",
     }
 
     # Identificamos las llamadas de herramientas
