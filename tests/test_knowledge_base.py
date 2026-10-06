@@ -1,6 +1,6 @@
 import unittest
 
-from app.agents.knowledge_base import retrieve_technical_knowledge
+from app.agents.orquestador.knowledge import retrieve_technical_knowledge
 
 
 class TechnicalKnowledgeTests(unittest.TestCase):

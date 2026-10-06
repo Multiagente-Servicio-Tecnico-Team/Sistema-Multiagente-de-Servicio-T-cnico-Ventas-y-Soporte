@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
-CURRENCY = os.getenv("CURRENCY", "COP").upper()
+CURRENCY = os.getenv("CURRENCY", "PEN").upper()
+CURRENCY_SYMBOL = "S/" if CURRENCY == "PEN" else CURRENCY
 
 
 def configure_tracing() -> None:

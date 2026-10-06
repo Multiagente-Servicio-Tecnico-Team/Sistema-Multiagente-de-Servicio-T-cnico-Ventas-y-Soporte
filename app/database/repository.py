@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import re
+import unicodedata
 from uuid import uuid4
 
-from sqlalchemy import MetaData, Table, inspect, insert, select, text
+from sqlalchemy import MetaData, Table, inspect, insert, select, update
 from sqlalchemy.engine import Connection, Engine
 
 from app.database.connection import get_engine
@@ -48,81 +50,108 @@ def _insert_row(connection: Connection, table: Table, values: dict[str, object])
     ).scalar_one()
 
 
-def ensure_schema(engine: Engine | None = None) -> None:
-    engine = engine or get_engine()
-    statements = (
-        """CREATE TABLE IF NOT EXISTS tickets (
-            id BIGSERIAL PRIMARY KEY,
-            codigo VARCHAR(40) NOT NULL UNIQUE,
-            tipo_solicitud VARCHAR(120) NOT NULL,
-            estado VARCHAR(40) NOT NULL DEFAULT 'En Análisis',
-            cliente_id BIGINT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )""",
-        """CREATE TABLE IF NOT EXISTS presupuestos (
-            id BIGSERIAL PRIMARY KEY,
-            ticket_id BIGINT NOT NULL,
-            cliente_id BIGINT NOT NULL,
-            diagnostico TEXT NOT NULL,
-            mano_obra NUMERIC(12, 2) NOT NULL,
-            total NUMERIC(12, 2) NOT NULL,
-            estado VARCHAR(40) NOT NULL DEFAULT 'Pendiente de aceptación',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )""",
-        """CREATE TABLE IF NOT EXISTS presupuesto_detalles (
-            id BIGSERIAL PRIMARY KEY,
-            presupuesto_id BIGINT NOT NULL,
-            repuesto_id BIGINT,
-            nombre VARCHAR(200) NOT NULL,
-            cantidad INTEGER NOT NULL,
-            precio_unitario NUMERIC(12, 2) NOT NULL,
-            subtotal NUMERIC(12, 2) NOT NULL
-        )""",
-    )
-    with engine.begin() as connection:
-        for statement in statements:
-            connection.execute(text(statement))
-
-
 def find_user_by_email(email: str, engine: Engine | None = None) -> dict[str, object] | None:
     engine = engine or get_engine()
     with engine.connect() as connection:
-        table = _table(connection, "usuarios")
+        table = _table(connection, "users")
         email_column = _column(table, "email")
-        id_column = _column(table, "id", "usuario_id")
-        name_column = _column(table, "nombre", "name")
+        id_column = _column(table, "id")
+        name_column = _column(table, "name")
+        active_column = _column(table, "active", "activo")
         if email_column is None or id_column is None:
-            raise RuntimeError("La tabla usuarios debe tener columnas id (o usuario_id) y email")
+            raise RuntimeError("La tabla users debe tener columnas id y email")
         selected_columns = [id_column, email_column]
         if name_column is not None:
             selected_columns.append(name_column)
+        conditions = [email_column.ilike(email.strip())]
+        if active_column is not None:
+            conditions.append(active_column.is_(True))
         row = connection.execute(
-            select(*selected_columns).where(email_column.ilike(email.strip())).limit(1)
+            select(*selected_columns).where(*conditions).limit(1)
         ).mappings().first()
         return dict(row) if row else None
 
 
 def create_ticket(
     user_id: object,
+    product: str,
     category: str,
+    symptoms: str,
     engine: Engine | None = None,
 ) -> int:
     engine = engine or get_engine()
-    ensure_schema(engine)
     with engine.begin() as connection:
         ticket = _table(connection, "tickets")
-        ticket_id = _insert_row(
+        return _insert_row(
             connection,
             ticket,
             {
-                "codigo": f"TCK-{uuid4().hex[:10].upper()}",
-                "tipo_solicitud": category,
-                "estado": "En Análisis",
+                "code": f"TCK-{uuid4().hex[:12].upper()}",
+                "codigo": f"TCK-{uuid4().hex[:12].upper()}",
+                "customer_id": user_id,
                 "cliente_id": user_id,
-                "usuario_id": user_id,
+                "title": f"{product} - {category}"[:200],
+                "failure_description": symptoms,
             },
         )
-    return ticket_id
+
+
+def update_ticket_intake(
+    ticket_id: int,
+    product: str,
+    category: str,
+    symptoms: str,
+    engine: Engine | None = None,
+) -> None:
+    engine = engine or get_engine()
+    with engine.begin() as connection:
+        ticket = _table(connection, "tickets")
+        id_column = _column(ticket, "id")
+        title_column = _column(ticket, "title")
+        description_column = _column(ticket, "failure_description")
+        if id_column is None or title_column is None or description_column is None:
+            raise RuntimeError("La tabla tickets no contiene las columnas de ingreso esperadas")
+        connection.execute(
+            update(ticket)
+            .where(id_column == ticket_id)
+            .values(
+                {
+                    title_column: f"{product} - {category}"[:200],
+                    description_column: symptoms,
+                }
+            )
+        )
+
+
+def update_ticket_diagnosis(
+    ticket_id: int,
+    diagnosis: str,
+    engine: Engine | None = None,
+) -> None:
+    engine = engine or get_engine()
+    with engine.begin() as connection:
+        ticket = _table(connection, "tickets")
+        id_column = _column(ticket, "id")
+        diagnosis_column = _column(ticket, "provisional_diagnosis")
+        status_column = _column(ticket, "status", "estado")
+        if id_column is None or diagnosis_column is None:
+            raise RuntimeError("La tabla tickets no permite guardar el diagnóstico provisional")
+        values = {diagnosis_column: diagnosis}
+        if status_column is not None:
+            values[status_column] = "IN_DIAGNOSIS"
+        connection.execute(
+            update(ticket)
+            .where(id_column == ticket_id)
+            .values(values)
+        )
+
+
+def _normalize(value: object) -> str:
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFD", str(value).casefold())
+        if unicodedata.category(character) != "Mn"
+    )
 
 
 def lookup_inventory(
@@ -133,27 +162,42 @@ def lookup_inventory(
     engine = engine or get_engine()
     tables = {name.casefold(): name for name in inspect(engine).get_table_names()}
     table_name = next(
-        (tables[name] for name in ("repuestos", "repuesto") if name in tables),
+        (tables[name] for name in ("spare_parts", "spare_part", "repuestos", "repuesto") if name in tables),
         None,
     )
     if table_name is None:
-        raise RuntimeError("No se encontró la tabla de inventario repuestos")
+        raise RuntimeError("No se encontró la tabla de inventario spare_parts")
 
     with engine.connect() as connection:
         table = _table(connection, table_name)
-        name_column = _column(table, "nombre", "nombre_repuesto", "articulo", "producto")
-        stock_column = _column(table, "stock", "cantidad", "existencias", "disponible")
-        price_column = _column(table, "precio", "precio_unitario", "costo")
-        id_column = _column(table, "id", "repuesto_id")
+        name_column = _column(table, "name", "nombre", "nombre_repuesto", "articulo", "producto")
+        stock_column = _column(table, "current_stock", "stock", "cantidad", "existencias", "disponible")
+        price_column = _column(table, "unit_price", "precio", "precio_unitario", "costo")
+        id_column = _column(table, "id", "spare_part_id", "repuesto_id")
+        active_column = _column(table, "active", "activo")
         if name_column is None or stock_column is None or price_column is None:
             raise RuntimeError(
-                f"La tabla {table_name} debe incluir nombre, stock/cantidad y precio"
+                f"La tabla {table_name} debe incluir nombre, inventario y precio unitario"
             )
-        rows = connection.execute(
-            select(table).where(name_column.ilike(f"%{requested_name.strip()}%"))
-        ).mappings().all()
+        query = select(table)
+        if active_column is not None:
+            query = query.where(active_column.is_(True))
+        rows = connection.execute(query).mappings().all()
 
-    if not rows:
+    requested = _normalize(requested_name)
+    requested_tokens = set(re.findall(r"[a-z0-9]+", requested))
+    matches = []
+    for candidate in rows:
+        item_name = str(candidate[name_column.name])
+        normalized_name = _normalize(item_name)
+        item_tokens = set(re.findall(r"[a-z0-9]+", normalized_name))
+        score = len(requested_tokens & item_tokens) / max(len(requested_tokens), 1)
+        if requested in normalized_name or normalized_name in requested:
+            score = 1.0
+        if score >= 0.5:
+            matches.append((score, candidate))
+
+    if not matches:
         return {
             "requested_name": requested_name,
             "name": requested_name,
@@ -164,10 +208,7 @@ def lookup_inventory(
             "inventory_id": None,
         }
 
-    row = next(
-        (candidate for candidate in rows if str(candidate[name_column.name]).casefold() == requested_name.casefold()),
-        rows[0],
-    )
+    _, row = max(matches, key=lambda match: match[0])
     stock = int(row[stock_column.name] or 0)
     return {
         "requested_name": requested_name,
@@ -181,7 +222,6 @@ def lookup_inventory(
 
 
 def save_quote(
-    user_id: object,
     ticket_id: int,
     diagnosis: str,
     labor_cost: Decimal,
@@ -189,7 +229,6 @@ def save_quote(
     engine: Engine | None = None,
 ) -> tuple[int, Decimal]:
     engine = engine or get_engine()
-    ensure_schema(engine)
     labor_cost = Decimal(str(labor_cost)).quantize(Decimal("0.01"))
     parts_total = sum(
         (
@@ -201,21 +240,24 @@ def save_quote(
     parts_total = parts_total.quantize(Decimal("0.01"))
     total = labor_cost + parts_total
     with engine.begin() as connection:
-        quotes = _table(connection, "presupuestos")
+        quotes = _table(connection, "quotes")
         quote_id = _insert_row(
             connection,
             quotes,
             {
                 "ticket_id": ticket_id,
-                "cliente_id": user_id,
-                "usuario_id": user_id,
+                "observations": diagnosis,
                 "diagnostico": diagnosis,
+                "labor_cost": labor_cost,
                 "mano_obra": labor_cost,
+                "parts_cost": parts_total,
+                "total_amount": total,
                 "total": total,
+                "status": "PENDING",
                 "estado": "Pendiente de aceptación",
             },
         )
-        details = _table(connection, "presupuesto_detalles")
+        details = _table(connection, "quote_details")
         for part in available_parts:
             quantity = int(part["quantity"])
             unit_price = Decimal(str(part["unit_price"]))
@@ -223,12 +265,100 @@ def save_quote(
                 connection,
                 details,
                 {
+                    "quote_id": quote_id,
                     "presupuesto_id": quote_id,
+                    "spare_part_id": part["inventory_id"],
                     "repuesto_id": part.get("inventory_id"),
+                    "name": part["name"],
                     "nombre": part["name"],
+                    "quantity": quantity,
                     "cantidad": quantity,
+                    "unit_price": unit_price,
                     "precio_unitario": unit_price,
                     "subtotal": unit_price * quantity,
                 },
             )
+        tickets = _table(connection, "tickets")
+        ticket_key = _column(tickets, "id")
+        ticket_status = _column(tickets, "status", "estado")
+        if ticket_key is not None and ticket_status is not None:
+            connection.execute(
+                update(tickets)
+                .where(ticket_key == ticket_id)
+                .values({ticket_status: "QUOTED"})
+            )
     return quote_id, total
+
+
+def create_ticket_with_quote(
+    user_id: object,
+    product: str,
+    category: str,
+    symptoms: str,
+    diagnosis: str,
+    labor_cost: Decimal,
+    available_parts: list[dict[str, object]],
+    engine: Engine | None = None,
+) -> tuple[int, int, Decimal]:
+    engine = engine or get_engine()
+    labor_cost = Decimal(str(labor_cost)).quantize(Decimal("0.01"))
+    parts_total = sum(
+        (
+            Decimal(str(part["unit_price"])) * int(part["quantity"])
+            for part in available_parts
+        ),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    total = labor_cost + parts_total
+
+    with engine.begin() as connection:
+        tickets = _table(connection, "tickets")
+        ticket_id = _insert_row(
+            connection,
+            tickets,
+            {
+                "code": f"TCK-{uuid4().hex[:12].upper()}",
+                "customer_id": user_id,
+                "title": f"{product} - {category}"[:200],
+                "failure_description": symptoms,
+                "provisional_diagnosis": diagnosis,
+                "status": "IN_DIAGNOSIS",
+            },
+        )
+        quotes = _table(connection, "quotes")
+        quote_id = _insert_row(
+            connection,
+            quotes,
+            {
+                "ticket_id": ticket_id,
+                "labor_cost": labor_cost,
+                "parts_cost": parts_total,
+                "total_amount": total,
+                "status": "PENDING",
+                "observations": diagnosis,
+            },
+        )
+        details = _table(connection, "quote_details")
+        for part in available_parts:
+            quantity = int(part["quantity"])
+            unit_price = Decimal(str(part["unit_price"]))
+            _insert_row(
+                connection,
+                details,
+                {
+                    "quote_id": quote_id,
+                    "spare_part_id": part["inventory_id"],
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "subtotal": unit_price * quantity,
+                },
+            )
+        ticket_key = _column(tickets, "id")
+        ticket_status = _column(tickets, "status")
+        connection.execute(
+            update(tickets)
+            .where(ticket_key == ticket_id)
+            .values({ticket_status: "QUOTED"})
+        )
+
+    return ticket_id, quote_id, total

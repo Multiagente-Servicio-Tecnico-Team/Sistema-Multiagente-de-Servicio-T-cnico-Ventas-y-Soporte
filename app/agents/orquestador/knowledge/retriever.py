@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 
-KNOWLEDGE_DIRECTORY = Path(__file__).parent / "knowledge"
+KNOWLEDGE_DIRECTORY = Path(__file__).parent
 TOKEN_PATTERN = re.compile(r"[a-záéíóúüñ0-9]+", re.IGNORECASE)
 STOP_WORDS = {
     "a", "al", "algun", "alguna", "algunas", "algunos", "como", "con", "cuando",

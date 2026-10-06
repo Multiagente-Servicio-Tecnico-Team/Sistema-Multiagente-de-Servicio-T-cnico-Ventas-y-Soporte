@@ -1,7 +1,7 @@
 import unittest
 from decimal import Decimal
 
-from app.agents.quotes import calculate_quote
+from app.agents.orquestador.agentes.quotes import calculate_quote
 
 
 class CalculateQuoteTests(unittest.TestCase):

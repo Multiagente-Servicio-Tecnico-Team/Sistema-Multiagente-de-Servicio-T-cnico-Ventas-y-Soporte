@@ -1,6 +1,6 @@
 from langchain_core.messages import HumanMessage
 
-from app.agents.graph import build_graph, new_thread_id
+from app.agents.orquestador import build_graph, new_thread_id
 from app.database.repository import find_user_by_email
 
 
@@ -38,7 +38,10 @@ def main() -> None:
             config=config,
         )
         print(f"\nAtención: {result['response']}\n")
-        if not result.get("awaiting_clarification"):
+            if result.get("quote_id") or not (
+                result.get("awaiting_clarification")
+                or result.get("awaiting_ticket_confirmation")
+            ):
             break
 
 
