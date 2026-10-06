@@ -13,4 +13,6 @@
 
 # Caché de Python
 __pycache__/
-*.pyc.coverage
+*.pyc
+# Cobertura de pruebas
+.coverage
