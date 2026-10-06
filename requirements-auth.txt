@@ -12,3 +12,5 @@ MarkupSafe==3.0.3
 pytest==8.4.2
 httpx==0.28.1
 httpx2==2.13.1
+# Chat de referencia (app/chat/reference.py)
+langgraph==1.2.12
