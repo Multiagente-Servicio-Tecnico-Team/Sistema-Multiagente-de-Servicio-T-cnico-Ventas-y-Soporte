@@ -14,3 +14,5 @@
 # Caché de Python
 __pycache__/
 *.pyc
+PROGRESO.md
+indicaciones.txt
