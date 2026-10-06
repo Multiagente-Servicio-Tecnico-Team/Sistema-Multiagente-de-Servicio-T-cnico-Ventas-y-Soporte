@@ -16,3 +16,6 @@ __pycache__/
 *.pyc
 # Cobertura de pruebas
 .coverage
+
+.local/
+.pytest_cache/

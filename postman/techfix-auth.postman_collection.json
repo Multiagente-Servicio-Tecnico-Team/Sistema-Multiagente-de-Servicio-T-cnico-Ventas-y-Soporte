@@ -1,0 +1,289 @@
+{
+  "info": {
+    "name": "TechFix.AI · Registro e inicio de sesión",
+    "description": "Pruebas de la API de cuentas: POST /registro, POST /login, GET /me, POST /logout, POST /recuperar y POST /restablecer. Ejecutar en orden. La primera petición genera un correo único para cada corrida.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "password", "value": "TriageTech#2026" },
+    { "key": "email", "value": "" },
+    { "key": "email_mayusculas", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 Salud del servicio",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": { "exec": [
+            "const email = `cliente.${Date.now()}@demo.pe`;",
+            "pm.collectionVariables.set('email', email);",
+            "pm.collectionVariables.set('email_mayusculas', email.toUpperCase());"
+          ] }
+        },
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('200 y base de datos conectada', () => {",
+            "  pm.response.to.have.status(200);",
+            "  pm.expect(pm.response.json()).to.eql({ estado: 'ok', bd: 'ok' });",
+            "});"
+          ] }
+        }
+      ],
+      "request": { "method": "GET", "url": "{{base_url}}/salud" }
+    },
+    {
+      "name": "02 Registro correcto",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "const body = pm.response.json();",
+            "pm.test('201 Created', () => pm.response.to.have.status(201));",
+            "pm.test('Devuelve el usuario como cliente', () => {",
+            "  pm.expect(body.usuario.email).to.eql(pm.collectionVariables.get('email'));",
+            "  pm.expect(body.usuario.nombre).to.eql('Martín');",
+            "  pm.expect(body.usuario.apellido).to.eql('Gómez');",
+            "  pm.expect(body.usuario.rol).to.eql('CUSTOMER');",
+            "});",
+            "pm.test('No expone contraseña ni hash', () => {",
+            "  pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get('password'));",
+            "  pm.expect(pm.response.text()).to.not.include('$2b$');",
+            "});",
+            "pm.collectionVariables.set('usuario_id', body.usuario.id);"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/registro",
+        "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Martín Gómez\",\n  \"email\": \"{{email}}\",\n  \"telefono\": \"+51 987 654 321\",\n  \"password\": \"{{password}}\"\n}" }
+      }
+    },
+    {
+      "name": "03 Registro con correo duplicado",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('409 Conflict en el campo email', () => {",
+            "  pm.response.to.have.status(409);",
+            "  pm.expect(pm.response.json()).to.eql({ detail: 'El correo ya está registrado.', field: 'email' });",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/registro",
+        "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Otra Persona\",\n  \"email\": \"{{email_mayusculas}}\",\n  \"telefono\": \"+51911222333\",\n  \"password\": \"{{password}}\"\n}" }
+      }
+    },
+    {
+      "name": "04 Registro con datos inválidos",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "const body = pm.response.json();",
+            "pm.test('422 con el campo inválido', () => {",
+            "  pm.response.to.have.status(422);",
+            "  pm.expect(body.detail).to.eql('Datos inválidos.');",
+            "  pm.expect(body.errors.map(e => e.campo)).to.include.members(['email', 'password']);",
+            "});",
+            "pm.test('No repite la contraseña enviada', () => pm.expect(pm.response.text()).to.not.include('debil'));"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/registro",
+        "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Ana Torres\",\n  \"email\": \"no-es-un-correo\",\n  \"telefono\": \"+51911222333\",\n  \"password\": \"debil\"\n}" }
+      }
+    },
+    {
+      "name": "05 Login correcto",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('Devuelve el usuario y su rol', () => {",
+            "  const u = pm.response.json().usuario;",
+            "  pm.expect(u.email).to.eql(pm.collectionVariables.get('email'));",
+            "  pm.expect(u.rol).to.eql('CUSTOMER');",
+            "});",
+            "pm.test('Crea cookie de sesión HttpOnly', () => {",
+            "  const header = pm.response.headers.get('Set-Cookie') || '';",
+            "  pm.expect(header).to.include('techfix_session=');",
+            "  pm.expect(header).to.include('HttpOnly');",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/login",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}" }
+      }
+    },
+    {
+      "name": "06 Usuario de la sesión (/me)",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('200 con el usuario autenticado', () => {",
+            "  pm.response.to.have.status(200);",
+            "  pm.expect(pm.response.json().usuario.email).to.eql(pm.collectionVariables.get('email'));",
+            "});"
+          ] }
+        }
+      ],
+      "request": { "method": "GET", "url": "{{base_url}}/me" }
+    },
+    {
+      "name": "07 Login con contraseña incorrecta",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('401 con mensaje genérico', () => {",
+            "  pm.response.to.have.status(401);",
+            "  pm.expect(pm.response.json()).to.eql({ detail: 'Correo o contraseña incorrectos.' });",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/login",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"Incorrecta#2026\"\n}" }
+      }
+    },
+    {
+      "name": "08 Login con correo inexistente",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('401 con el mismo mensaje (no revela si el correo existe)', () => {",
+            "  pm.response.to.have.status(401);",
+            "  pm.expect(pm.response.json()).to.eql({ detail: 'Correo o contraseña incorrectos.' });",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/login",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"nadie.{{$timestamp}}@demo.pe\",\n  \"password\": \"{{password}}\"\n}" }
+      }
+    },
+    {
+      "name": "09 Cerrar sesión",
+      "event": [
+        { "listen": "test", "script": { "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"] } }
+      ],
+      "request": { "method": "POST", "url": "{{base_url}}/logout" }
+    },
+    {
+      "name": "10 /me sin sesión",
+      "event": [
+        { "listen": "test", "script": { "exec": ["pm.test('401 tras cerrar sesión', () => pm.response.to.have.status(401));"] } }
+      ],
+      "request": { "method": "GET", "url": "{{base_url}}/me" }
+    },
+    {
+      "name": "11 Recuperar con correo registrado",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('200 con mensaje genérico', () => {",
+            "  pm.response.to.have.status(200);",
+            "  pm.expect(pm.response.json().detail).to.include('Si el correo está registrado');",
+            "});",
+            "pm.test('No devuelve el token', () => pm.expect(pm.response.text()).to.not.include('token'));",
+            "pm.collectionVariables.set('respuesta_recuperar', pm.response.text());"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/recuperar",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\"\n}" }
+      }
+    },
+    {
+      "name": "12 Recuperar con correo no registrado",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('Misma respuesta que con un correo registrado', () => {",
+            "  pm.response.to.have.status(200);",
+            "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('respuesta_recuperar'));",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/recuperar",
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"nadie.{{$timestamp}}@demo.pe\"\n}" }
+      }
+    },
+    {
+      "name": "13 Restablecer con enlace inválido",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('410 enlace no válido', () => {",
+            "  pm.response.to.have.status(410);",
+            "  pm.expect(pm.response.json()).to.eql({ detail: 'El enlace no es válido o ya expiró.', code: 'invalid_token' });",
+            "});"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/restablecer",
+        "body": { "mode": "raw", "raw": "{\n  \"token\": \"token-que-no-existe-{{$timestamp}}\",\n  \"password\": \"NuevaClave#2026\"\n}" }
+      }
+    },
+    {
+      "name": "14 Restablecer con contraseña débil",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "pm.test('422 en el campo password', () => {",
+            "  pm.response.to.have.status(422);",
+            "  pm.expect(pm.response.json().field).to.eql('password');",
+            "});",
+            "pm.test('No repite la contraseña enviada', () => pm.expect(pm.response.text()).to.not.include('debil'));"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/restablecer",
+        "body": { "mode": "raw", "raw": "{\n  \"token\": \"token-de-prueba-{{$timestamp}}\",\n  \"password\": \"debil\"\n}" }
+      }
+    }
+  ]
+}
