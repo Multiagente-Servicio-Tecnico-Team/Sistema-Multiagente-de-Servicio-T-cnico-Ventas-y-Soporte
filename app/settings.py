@@ -15,7 +15,8 @@ class Settings:
     langsmith_project: str
     langsmith_hide_inputs: bool
     langsmith_hide_outputs: bool
-    labor_hourly_rate: Decimal | None
+    labor_maintenance_price: Decimal
+    labor_diagnosis_price: Decimal
 
     def require_chat_configuration(self) -> None:
         missing = []
@@ -33,13 +34,12 @@ class Settings:
                 "Revisa las variables del archivo .env."
             )
 
-    def require_labor_hourly_rate(self) -> Decimal:
-        if self.labor_hourly_rate is None:
-            raise RuntimeError(
-                "LABOR_HOURLY_RATE no está configurada; no se puede generar "
-                "una cotización sin una tarifa definida."
-            )
-        return self.labor_hourly_rate
+    def labor_price_for(self, task_type: str) -> Decimal:
+        if task_type == "maintenance":
+            return self.labor_maintenance_price
+        if task_type == "diagnosis":
+            return self.labor_diagnosis_price
+        raise ValueError(f"Tipo de trabajo no reconocido: {task_type}.")
 
 
 def _optional_decimal(name: str) -> Decimal | None:
@@ -52,6 +52,15 @@ def _optional_decimal(name: str) -> Decimal | None:
         raise ValueError(f"{name} debe ser un importe decimal válido.") from exc
     if not amount.is_finite() or amount < 0:
         raise ValueError(f"{name} debe ser un importe decimal no negativo.")
+    return amount
+
+
+def _labor_price(name: str, default: str) -> Decimal:
+    amount = _optional_decimal(name)
+    if amount is None:
+        return Decimal(default)
+    if amount <= 0:
+        raise ValueError(f"{name} debe ser un importe decimal positivo.")
     return amount
 
 
@@ -87,5 +96,12 @@ def load_settings() -> Settings:
             "LANGSMITH_HIDE_OUTPUTS",
             default=True,
         ),
-        labor_hourly_rate=_optional_decimal("LABOR_HOURLY_RATE"),
+        labor_maintenance_price=_labor_price(
+            "LABOR_MAINTENANCE_PRICE",
+            "40.00",
+        ),
+        labor_diagnosis_price=_labor_price(
+            "LABOR_DIAGNOSIS_PRICE",
+            "50.00",
+        ),
     )

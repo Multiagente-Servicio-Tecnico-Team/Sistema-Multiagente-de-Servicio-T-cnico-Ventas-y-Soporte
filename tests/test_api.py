@@ -29,13 +29,19 @@ class FakeGraph:
                 )
             ],
             "outcome": self.outcome,
-            "ticket_id": 84 if self.outcome == "quoted" or self.stale_ticket else None,
-            "ticket_code": (
-                "ST-123456789ABC"
-                if self.outcome == "quoted" or self.stale_ticket
+            "ticket_id": (
+                84
+                if self.outcome in {"quoted", "ticket_created"} or self.stale_ticket
                 else None
             ),
-            "quote_id": 91 if self.outcome == "quoted" or self.stale_ticket else None,
+            "ticket_code": (
+                "ST-123456789ABC"
+                if self.outcome in {"quoted", "ticket_created"} or self.stale_ticket
+                else None
+            ),
+            "quote_id": (
+                91 if self.outcome == "quoted" or self.stale_ticket else None
+            ),
             "quote": {
                 "labor_cost": Decimal("120.00"),
                 "parts_cost": Decimal("20.50"),
@@ -102,6 +108,25 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(response.json()["ticket_code"], "ST-123456789ABC")
         self.assertEqual(response.json()["quote_id"], 91)
         self.assertEqual(response.json()["quote"]["total_amount"], "140.50")
+
+    def test_chat_returns_ticket_reference_without_quote_for_support_ticket(self):
+        graph = FakeGraph(outcome="ticket_created")
+        with patch("app.main.get_graph", return_value=graph):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "session_id": str(uuid4()),
+                    "email": "ana@example.com",
+                    "message": "Sí, crea el ticket de servicio técnico",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["outcome"], "ticket_created")
+        self.assertEqual(response.json()["ticket_id"], 84)
+        self.assertEqual(response.json()["ticket_code"], "ST-123456789ABC")
+        self.assertIsNone(response.json()["quote_id"])
+        self.assertIsNone(response.json()["quote"])
 
     def test_chat_hides_persisted_ticket_ids_for_nonquoted_outcomes(self):
         graph = FakeGraph(stale_ticket=True)
@@ -218,7 +243,8 @@ class ChatApiTests(unittest.TestCase):
             langsmith_project="test-project",
             langsmith_hide_inputs=True,
             langsmith_hide_outputs=True,
-            labor_hourly_rate=Decimal("80.00"),
+            labor_maintenance_price=Decimal("40.00"),
+            labor_diagnosis_price=Decimal("50.00"),
         )
         with (
             patch("app.main.load_settings", return_value=settings),

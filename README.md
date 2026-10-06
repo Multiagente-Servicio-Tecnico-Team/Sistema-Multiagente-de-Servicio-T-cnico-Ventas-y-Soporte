@@ -49,17 +49,20 @@ flowchart TD
 
 | Agente / componente | Función |
 | --- | --- |
-| Supervisor de atención | Clasifica la intención, extrae la solicitud, solicita aclaraciones y procesa la confirmación o rechazo de la propuesta. |
+| Supervisor de atención | Clasifica la intención, extrae la solicitud, solicita aclaraciones y procesa la confirmación o rechazo de una cotización o ticket técnico. |
 | Recuperación de conocimiento | Busca casos en los archivos `.md` de `app/agents/jerarquico/knowledge_base/` y entrega el diagnóstico, la guía técnica y referencias del catálogo al agente técnico. |
-| Soporte técnico | Genera diagnóstico provisional y horas estimadas; restringe la selección a identificadores del manual cuando hay casos coincidentes. |
+| Soporte técnico | Genera un diagnóstico provisional y clasifica el trabajo como diagnóstico si la causa sigue sin identificarse, o como mantenimiento si la tarea ya está determinada. |
 | Almacén y logística | Resuelve identificadores contra el código/nombre del catálogo PostgreSQL y valida precio positivo y stock mediante consultas parametrizadas. |
-| Ventas | Calcula mano de obra y repuestos con `Decimal`, usando la tarifa configurada y los precios actuales de la base. |
-| Persistencia | Guarda ticket, cotización, detalles y actualización de estado en una única transacción. |
+| Ventas | Aplica un precio fijo de mano de obra según la tarea y suma los precios actuales de los repuestos validados en PostgreSQL. |
+| Persistencia | Guarda ticket, cotización y detalles en una transacción; los diagnósticos sin repuestos documentados pueden guardar una cotización que cubre solo la mano de obra diagnóstica. |
 
 El LLM no genera SQL ni determina los precios finales. La disponibilidad de un
-repuesto se confirma desde PostgreSQL. Si no hay stock, el producto no puede
-identificarse de forma inequívoca o cambian los valores antes de confirmar, no se
-guarda una cotización desactualizada.
+repuesto se confirma desde PostgreSQL. Si no hay una coincidencia exacta, busca
+opciones de la misma familia usando el prefijo del identificador del manual, por
+ejemplo `SSD` en `SSD_1TB`. Una única opción disponible puede presentarse como
+alternativa sujeta a confirmar compatibilidad; si hay varias, el chat muestra
+stock y precio para que se aclare cuál revisar. Sin stock suficiente no se genera
+cotización.
 
 ## Flujo de servicio
 
@@ -68,16 +71,22 @@ guarda una cotización desactualizada.
 3. La recuperación busca síntomas en los casos Markdown y aporta guías técnicas y
    códigos candidatos; `y` requiere los artículos indicados y `o` obliga a elegir
    exactamente una alternativa.
-4. El agente técnico presenta un diagnóstico provisional, una orientación técnica
-   preliminar y estima las horas de mano de obra.
-5. Almacén resuelve cada candidato en PostgreSQL y valida precio positivo y stock;
-   ventas calcula la propuesta.
+4. El agente técnico presenta un diagnóstico provisional y determina si hay un
+   caso documentado en el manual. No estima horas ni precios.
+5. Si la causa exacta no está identificada —aunque exista una guía con causas
+   posibles— el sistema no cotiza candidatos de repuestos: ofrece abrir un ticket
+   y un presupuesto de diagnóstico por S/ 50, con repuestos en S/ 0. Si el trabajo
+   o cambio de componente ya está determinado, almacén valida precio y stock en
+   PostgreSQL y ventas aplica S/ 40 fijos más los repuestos confirmados.
 6. El chat presenta la propuesta sin crear registros en PostgreSQL.
 7. Si el cliente confirma, se vuelve a comprobar inventario y precio. Si cambió la
    propuesta, se muestran los importes actualizados y se solicita confirmación otra
    vez.
 8. Con una confirmación vigente se guardan ticket, cotización y detalles dentro de
    una transacción. Una respuesta negativa no genera escrituras.
+9. En los casos de diagnóstico, el mensaje indica que se creará el ticket, muestra
+   S/ 50 de mano de obra, S/ 0 de repuestos y pide confirmación. Solo tras el sí se
+   guardan ticket y cotización; al persistir no se insertan filas en `quote_details`.
 
 ## Base de conocimiento Markdown
 
@@ -96,6 +105,11 @@ usa `y` cuando deben consultarse todos o `o` cuando son alternativas:
   - **Palabras clave**: síntoma, equipo, incidencia
 ```
 
+El manual incluye un caso para laptops lentas que tardan en abrir aplicaciones y
+referencia `SSD_1TB` como candidato sujeto a revisión técnica, compatibilidad,
+precio y stock. Cuando no se recupera un caso coincidente, el flujo no sugiere
+piezas y ofrece una cotización únicamente por diagnóstico.
+
 Cada identificador se busca como código o como parte del nombre en
 `spare_parts`. Registra también los servicios como artículos activos del catálogo
 con stock suficiente y un precio positivo. El Markdown no crea ni modifica
@@ -104,10 +118,14 @@ compatibilidad, inventario y tarifa. Si falta el mapeo del catálogo, no se gene
 una cotización.
 
 Los manuales Markdown no contienen tarifas: aportan conocimiento técnico y
-referencias del catálogo. Los totales se calculan exclusivamente con
-`LABOR_HOURLY_RATE` y precios positivos vigentes de PostgreSQL. Si no se reconoce
-un artículo/servicio, hay ambigüedad, falta stock o el precio es cero, el agente no
-propone ni guarda una cotización.
+referencias del catálogo. Los totales se calculan con los importes fijos
+`LABOR_MAINTENANCE_PRICE` o `LABOR_DIAGNOSIS_PRICE` y precios positivos vigentes
+de PostgreSQL. Si hay varias alternativas de catálogo, se muestran al cliente sin
+elegir una automáticamente; si no hay stock suficiente o el precio es cero, no se
+genera cotización de mantenimiento. Si no se puede determinar la causa exacta,
+se puede cotizar únicamente el diagnóstico fijo, incluso si una guía relacionada
+solo ofrece causas posibles; no se incluyen repuestos hasta que el técnico
+determine la reparación.
 
 ## Tecnologías
 
@@ -179,7 +197,8 @@ Configura las siguientes variables localmente en `.env`:
 GROQ_API_KEY=tu_clave_groq
 GROQ_MODEL=openai/gpt-oss-20b
 DATABASE_URL=postgresql+pg8000://usuario:contraseña@localhost:5432/base
-LABOR_HOURLY_RATE=10
+LABOR_MAINTENANCE_PRICE=40.00
+LABOR_DIAGNOSIS_PRICE=50.00
 
 LANGSMITH_API_KEY=tu_clave_langsmith
 LANGSMITH_TRACING=true
@@ -188,9 +207,11 @@ LANGSMITH_HIDE_INPUTS=true
 LANGSMITH_HIDE_OUTPUTS=true
 ```
 
-`LABOR_HOURLY_RATE` es la tarifa por hora de mano de obra configurada para la
-aplicación. El esquema de base de datos no establece moneda. No subas `.env` ni
-publiques sus claves.
+`LABOR_MAINTENANCE_PRICE` y `LABOR_DIAGNOSIS_PRICE` son precios fijos en soles
+peruanos (PEN); el primero cubre mantenimiento/cambio de partes y el segundo el
+diagnóstico cuando todavía no se identifica la falla. El esquema de base de datos
+guarda el importe, pero no una columna de moneda ni una tabla de tarifas. No subas
+`.env` ni publiques sus claves.
 
 ## Ejecución local
 

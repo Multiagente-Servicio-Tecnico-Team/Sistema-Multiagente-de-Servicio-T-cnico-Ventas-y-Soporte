@@ -1,15 +1,6 @@
-import re
-from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
-
-
-LABOR_HOURS_RANGE = re.compile(
-    r"^\s*(\d+(?:\.\d+)?)\s*(?:-|–|—|\ba\b|\bto\b|\bhasta\b)\s*"
-    r"(\d+(?:\.\d+)?)\s*$",
-    re.IGNORECASE,
-)
+from pydantic import BaseModel, Field
 
 
 class IntakeDecision(BaseModel):
@@ -35,26 +26,15 @@ class PartRequest(BaseModel):
 
 class TechnicalDiagnosis(BaseModel):
     provisional_diagnosis: str = Field(min_length=1, max_length=2000)
-    estimated_labor_hours: Decimal = Field(ge=0, le=100)
+    labor_task_type: Literal["maintenance", "diagnosis"] = Field(
+        description=(
+            "Usa diagnosis si la causa exacta no está identificada o el técnico "
+            "debe inspeccionar el equipo antes de definir la reparación. Usa "
+            "maintenance solo cuando el trabajo o cambio de componente ya está "
+            "determinado."
+        )
+    )
     required_parts: list[PartRequest] = Field(default_factory=list, max_length=10)
-
-    @field_validator("estimated_labor_hours", mode="before")
-    @classmethod
-    def normalize_labor_hours_range(cls, value: object) -> object:
-        if not isinstance(value, str):
-            return value
-
-        normalized = value.strip().replace(",", ".")
-        match = LABOR_HOURS_RANGE.fullmatch(normalized)
-        if not match:
-            return normalized
-
-        minimum, maximum = (Decimal(bound) for bound in match.groups())
-        if minimum > maximum:
-            raise ValueError("El rango de horas debe estar en orden ascendente.")
-        if minimum < 0 or maximum > 100:
-            raise ValueError("Las horas deben estar entre 0 y 100.")
-        return (minimum + maximum) / 2
 
 
 class QuoteConfirmation(BaseModel):

@@ -10,15 +10,17 @@ from app.database.repository import ServiceRepository
 def make_customer_care_supervisor(llm: Any, repository: ServiceRepository):
     def customer_care_supervisor(state: ServiceState) -> dict[str, Any]:
         if state.get("awaiting_quote_confirmation"):
+            confirmation_target = "el ticket y la cotización mostrados"
             confirmation = llm.with_structured_output(QuoteConfirmation).invoke(
                 [
                     SystemMessage(
                         content=(
                             "Eres el supervisor de atención. Clasifica solo la "
                             "respuesta más reciente del cliente a la pregunta de "
-                            "confirmación de presupuesto. `confirm` significa que "
-                            "autoriza guardar el ticket y la cotización mostrados; "
-                            "`decline` significa que no los autoriza; usa `unclear` "
+                            "confirmación pendiente. `confirm` significa que "
+                            f"autoriza guardar {confirmation_target}; "
+                            "`decline` significa que no autoriza guardar lo propuesto; "
+                            "usa `unclear` "
                             "si no hay un sí/no inequívoco. No interpretes un mensaje "
                             "anterior como la confirmación actual."
                         )
@@ -49,9 +51,9 @@ def make_customer_care_supervisor(llm: Any, repository: ServiceRepository):
             question = (confirmation.clarification_question or "").strip()
             if not question:
                 question = (
-                    "¿Confirmas que guarde este ticket y la cotización? Responde "
-                    "“sí” para guardar o “no” para cancelar."
+                    "¿Confirmas que guarde este ticket y la cotización?"
                 )
+                question += " Responde “sí” para guardar o “no” para cancelar."
             return {
                 "route": "awaiting_confirmation",
                 "awaiting_quote_confirmation": True,

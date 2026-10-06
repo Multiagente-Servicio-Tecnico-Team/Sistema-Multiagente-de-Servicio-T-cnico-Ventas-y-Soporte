@@ -20,7 +20,8 @@ class SettingsTests(unittest.TestCase):
                 "DATABASE_URL": "postgresql+pg8000://user:password@localhost/db",
                 "LANGSMITH_API_KEY": "langsmith-secret",
                 "LANGSMITH_TRACING": "true",
-                "LABOR_HOURLY_RATE": "75.50",
+                "LABOR_MAINTENANCE_PRICE": "45.50",
+                "LABOR_DIAGNOSIS_PRICE": "55.00",
             }
         )
 
@@ -28,7 +29,8 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(settings.langsmith_tracing)
         self.assertTrue(settings.langsmith_hide_inputs)
         self.assertTrue(settings.langsmith_hide_outputs)
-        self.assertEqual(settings.labor_hourly_rate, Decimal("75.50"))
+        self.assertEqual(settings.labor_maintenance_price, Decimal("45.50"))
+        self.assertEqual(settings.labor_diagnosis_price, Decimal("55.00"))
         settings.require_chat_configuration()
 
     def test_missing_tracing_key_is_reported(self):
@@ -70,15 +72,19 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn("langsmith-secret", rendered)
         self.assertNotIn("password", rendered)
 
-    def test_labor_rate_must_be_configured_for_quotes(self):
+    def test_labor_prices_have_fixed_defaults_in_peruvian_soles(self):
         settings = self.load_from_environment({})
 
-        with self.assertRaisesRegex(RuntimeError, "LABOR_HOURLY_RATE"):
-            settings.require_labor_hourly_rate()
+        self.assertEqual(settings.labor_maintenance_price, Decimal("40.00"))
+        self.assertEqual(settings.labor_diagnosis_price, Decimal("50.00"))
 
-    def test_rejects_negative_labor_rate(self):
-        with self.assertRaisesRegex(ValueError, "no negativo"):
-            self.load_from_environment({"LABOR_HOURLY_RATE": "-1"})
+    def test_rejects_nonpositive_fixed_labor_prices(self):
+        for key, value in (
+            ("LABOR_MAINTENANCE_PRICE", "0"),
+            ("LABOR_DIAGNOSIS_PRICE", "-1"),
+        ):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.load_from_environment({key: value})
 
     def test_rejects_invalid_tracing_flag(self):
         with self.assertRaisesRegex(ValueError, "LANGSMITH_TRACING"):

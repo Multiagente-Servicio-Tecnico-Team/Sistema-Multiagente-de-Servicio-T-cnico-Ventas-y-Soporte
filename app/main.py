@@ -210,9 +210,15 @@ def chat(request: ChatRequest) -> ChatResponse:
         session_id=request.session_id,
         answer=messages[-1].content,
         outcome=outcome,
-        ticket_id=result.get("ticket_id") if outcome == "quoted" else None,
+        ticket_id=(
+            result.get("ticket_id")
+            if outcome in {"quoted", "ticket_created"}
+            else None
+        ),
         ticket_code=(
-            result.get("ticket_code") or None if outcome == "quoted" else None
+            result.get("ticket_code") or None
+            if outcome in {"quoted", "ticket_created"}
+            else None
         ),
         quote_id=result.get("quote_id") if outcome == "quoted" else None,
         quote=quote_response,

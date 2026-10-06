@@ -17,9 +17,12 @@ class MarkdownKnowledgeRetrieverTests(unittest.TestCase):
                 results = self.retriever.retrieve(query)
 
                 self.assertGreater(len(results), 0)
-                self.assertEqual(
+                self.assertIn(
                     results[0].title,
-                    "Uso de disco al 100% y equipo lento",
+                    {
+                        "Uso de disco al 100% y equipo lento",
+                        "Laptop lenta y demora en abrir aplicaciones",
+                    },
                 )
                 self.assertEqual(
                     results[0].recommended_parts[0].identifier,
@@ -31,6 +34,15 @@ class MarkdownKnowledgeRetrieverTests(unittest.TestCase):
 
         self.assertEqual(results[0].title, "Laptop no carga o la batería dura poco")
         self.assertEqual(results[0].recommended_parts[0].identifier, "REP-BAT-L2023")
+
+    def test_recovers_ssd_case_for_laptop_slow_to_open_applications(self):
+        results = self.retriever.retrieve(
+            "Mi laptop está lenta y demora mucho en abrir aplicaciones"
+        )
+
+        self.assertGreater(len(results), 0)
+        self.assertEqual(results[0].title, "Laptop lenta y demora en abrir aplicaciones")
+        self.assertEqual(results[0].recommended_parts[0].identifier, "SSD_1TB")
 
     def test_alternatives_require_choosing_one_catalog_identifier(self):
         results = self.retriever.retrieve("PC se apaga poco después de encender")

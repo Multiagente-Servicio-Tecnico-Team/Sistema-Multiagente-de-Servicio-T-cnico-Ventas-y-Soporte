@@ -1,5 +1,4 @@
 import unittest
-from dataclasses import replace
 from decimal import Decimal
 
 from app.agents.jerarquico.graph.builder import build_multiagent_graph
@@ -46,13 +45,24 @@ class FakeStructuredResponse:
 
 
 class FakeRepository:
-    def __init__(self, *, customer=True, stock=10, unit_price=Decimal("10.25")) -> None:
+    def __init__(
+        self,
+        *,
+        customer=True,
+        stock=10,
+        unit_price=Decimal("10.25"),
+        missing_parts=None,
+        alternatives=None,
+    ) -> None:
         self.customer = (
             {"id": 12, "name": "Ana", "last_name": "Prueba"} if customer else None
         )
         self.stock = stock
         self.unit_price = unit_price
         self.lookups = []
+        self.alternative_lookups = []
+        self.missing_parts = set(missing_parts or ())
+        self.alternatives = list(alternatives or ())
         self.created_ticket = None
         self.saved_quote = None
 
@@ -71,6 +81,8 @@ class FakeRepository:
 
     def find_spare_parts(self, search_term):
         self.lookups.append(search_term)
+        if search_term in self.missing_parts:
+            return []
         part_id = 7 if search_term == "Pasta_Termica" else 8
         return [
             {
@@ -82,20 +94,27 @@ class FakeRepository:
             }
         ]
 
+    def find_spare_part_alternatives(self, search_term):
+        self.alternative_lookups.append(search_term)
+        return self.alternatives
+
     def save_quote(self, **values):
         self.saved_quote = values
         return 91
 
 
-class AdjustableRateSettings:
+class AdjustableLaborSettings:
     def __init__(self) -> None:
-        self.labor_hourly_rate = Decimal("80.00")
+        self.labor_maintenance_price = Decimal("40.00")
+        self.labor_diagnosis_price = Decimal("50.00")
 
     def require_chat_configuration(self) -> None:
         return None
 
-    def require_labor_hourly_rate(self) -> Decimal:
-        return self.labor_hourly_rate
+    def labor_price_for(self, task_type: str) -> Decimal:
+        if task_type == "maintenance":
+            return self.labor_maintenance_price
+        return self.labor_diagnosis_price
 
 
 def make_settings() -> Settings:
@@ -108,7 +127,8 @@ def make_settings() -> Settings:
         langsmith_project="test-project",
         langsmith_hide_inputs=True,
         langsmith_hide_outputs=True,
-        labor_hourly_rate=Decimal("80.00"),
+        labor_maintenance_price=Decimal("40.00"),
+        labor_diagnosis_price=Decimal("50.00"),
     )
 
 
@@ -128,7 +148,7 @@ def make_model(
         diagnosis=diagnosis
         or TechnicalDiagnosis(
             provisional_diagnosis="Posible falla de ventilación.",
-            estimated_labor_hours=Decimal("1.50"),
+            labor_task_type="maintenance",
             required_parts=[
                 PartRequest(search_term="Pasta_Termica", quantity=1),
                 PartRequest(search_term="Ventilador_CPU", quantity=1),
@@ -202,34 +222,10 @@ class MultiagentGraphTests(unittest.TestCase):
             4000,
         )
 
-    def test_diagnosis_normalizes_labor_hour_range_to_midpoint(self):
-        diagnosis = TechnicalDiagnosis(
-            provisional_diagnosis="Posible unidad lenta.",
-            estimated_labor_hours="1-2",
-        )
-
-        self.assertEqual(diagnosis.estimated_labor_hours, Decimal("1.5"))
-
-    def test_diagnosis_normalizes_decimal_comma_range(self):
-        diagnosis = TechnicalDiagnosis(
-            provisional_diagnosis="Posible unidad lenta.",
-            estimated_labor_hours="1,0–2,0",
-        )
-
-        self.assertEqual(diagnosis.estimated_labor_hours, Decimal("1.5"))
-
-    def test_diagnosis_rejects_invalid_labor_hour_ranges(self):
-        for value in ("2-1", "0-101"):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                TechnicalDiagnosis(
-                    provisional_diagnosis="Diagnóstico provisional.",
-                    estimated_labor_hours=value,
-                )
-
     def test_calculates_totals_without_floating_point_arithmetic(self):
         quote = calculate_quote(
-            labor_hours=Decimal("1.50"),
-            labor_hourly_rate=Decimal("80.00"),
+            labor_cost=Decimal("40.00"),
+            labor_task_type="maintenance",
             parts=[
                 {
                     "id": 7,
@@ -240,23 +236,28 @@ class MultiagentGraphTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(quote["labor_cost"], Decimal("120.00"))
+        self.assertEqual(quote["labor_cost"], Decimal("40.00"))
         self.assertEqual(quote["parts_cost"], Decimal("20.50"))
-        self.assertEqual(quote["total_amount"], Decimal("140.50"))
+        self.assertEqual(quote["total_amount"], Decimal("60.50"))
         self.assertEqual(quote["parts"][0]["subtotal"], Decimal("20.50"))
 
-    def test_quote_rejects_missing_or_zero_price_parts(self):
-        with self.assertRaisesRegex(ValueError, "sin artículos"):
-            calculate_quote(
-                labor_hours=Decimal("1.00"),
-                labor_hourly_rate=Decimal("80.00"),
-                parts=[],
-            )
+    def test_diagnosis_quote_allows_fixed_labor_without_parts(self):
+        quote = calculate_quote(
+            labor_cost=Decimal("50.00"),
+            labor_task_type="diagnosis",
+            parts=[],
+        )
 
+        self.assertEqual(quote["labor_cost"], Decimal("50.00"))
+        self.assertEqual(quote["parts_cost"], Decimal("0.00"))
+        self.assertEqual(quote["total_amount"], Decimal("50.00"))
+        self.assertEqual(quote["parts"], [])
+
+    def test_quote_rejects_zero_price_parts(self):
         with self.assertRaisesRegex(ValueError, "precio positivos"):
             calculate_quote(
-                labor_hours=Decimal("1.00"),
-                labor_hourly_rate=Decimal("80.00"),
+                labor_cost=Decimal("40.00"),
+                labor_task_type="maintenance",
                 parts=[
                     {
                         "id": 7,
@@ -288,8 +289,16 @@ class MultiagentGraphTests(unittest.TestCase):
             repository.lookups,
             ["Pasta_Termica", "Ventilador_CPU"],
         )
-        self.assertIn("Total indicativo calculado: 140.50", result["messages"][-1].content)
-        self.assertIn("Orientación técnica preliminar", result["messages"][-1].content)
+        self.assertIn("el total provisional es S/ 60.50", result["messages"][-1].content)
+        self.assertIn(
+            "Por lo que describes, podría tratarse de:",
+            result["messages"][-1].content,
+        )
+        self.assertNotIn("Guía consultada", result["messages"][-1].content)
+        self.assertNotIn(
+            "Orientación técnica preliminar",
+            result["messages"][-1].content,
+        )
 
     def test_confirmation_persists_ticket_and_quote_atomically(self):
         repository = FakeRepository()
@@ -309,9 +318,9 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertFalse(result["awaiting_quote_confirmation"])
         self.assertEqual(repository.created_ticket["customer_id"], 12)
         self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
-        self.assertEqual(repository.saved_quote["total_amount"], Decimal("140.50"))
+        self.assertEqual(repository.saved_quote["total_amount"], Decimal("60.50"))
         self.assertIn("ST-", result["messages"][-1].content)
-        self.assertIn("140.50", result["messages"][-1].content)
+        self.assertIn("S/ 60.50", result["messages"][-1].content)
 
     def test_stock_change_requires_a_new_confirmation(self):
         repository = FakeRepository()
@@ -332,9 +341,9 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertIn("propuesta anterior", result["messages"][-1].content)
         self.assertIn("valores actualizados", result["messages"][-1].content)
 
-    def test_labor_rate_change_requires_a_new_confirmation(self):
+    def test_fixed_maintenance_price_change_requires_a_new_confirmation(self):
         repository = FakeRepository()
-        settings = AdjustableRateSettings()
+        settings = AdjustableLaborSettings()
         graph = build_multiagent_graph(
             settings=settings,
             repository=repository,
@@ -342,14 +351,14 @@ class MultiagentGraphTests(unittest.TestCase):
         )
 
         invoke(graph)
-        settings.labor_hourly_rate = Decimal("90.00")
+        settings.labor_maintenance_price = Decimal("50.00")
         result = invoke(graph, "Sí, confirma", initial=False)
 
         self.assertEqual(result["outcome"], "awaiting_confirmation")
         self.assertIsNone(repository.created_ticket)
         self.assertIsNone(repository.saved_quote)
-        self.assertIn("tarifa de mano de obra", result["messages"][-1].content)
-        self.assertIn("Total indicativo calculado: 155.50", result["messages"][-1].content)
+        self.assertIn("cambió", result["messages"][-1].content)
+        self.assertIn("el total provisional es S/ 70.50", result["messages"][-1].content)
 
     def test_declining_suggestion_does_not_persist_data(self):
         repository = FakeRepository()
@@ -417,7 +426,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertIsNone(repository.saved_quote)
         self.assertIn("precio positivo", result["messages"][-1].content)
 
-    def test_no_identified_parts_cannot_generate_a_zero_material_quote(self):
+    def test_unknown_manual_case_quotes_diagnostic_fee_without_parts(self):
         repository = FakeRepository()
         graph = build_multiagent_graph(
             settings=make_settings(),
@@ -425,7 +434,7 @@ class MultiagentGraphTests(unittest.TestCase):
             model=make_model(
                 diagnosis=TechnicalDiagnosis(
                     provisional_diagnosis="Requiere revisión técnica.",
-                    estimated_labor_hours=Decimal("1.00"),
+                    labor_task_type="diagnosis",
                     required_parts=[],
                 )
             ),
@@ -434,11 +443,260 @@ class MultiagentGraphTests(unittest.TestCase):
 
         result = invoke(graph)
 
-        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertEqual(result["labor_task_type"], "diagnosis")
+        self.assertTrue(result["awaiting_quote_confirmation"])
         self.assertEqual(repository.lookups, [])
         self.assertIsNone(repository.created_ticket)
         self.assertIsNone(repository.saved_quote)
-        self.assertIn("materiales en cero", result["messages"][-1].content)
+        self.assertEqual(result["quote"]["labor_cost"], Decimal("50.00"))
+        self.assertEqual(result["quote"]["parts_cost"], Decimal("0.00"))
+        self.assertEqual(result["quote"]["total_amount"], Decimal("50.00"))
+        self.assertEqual(result["quote"]["parts"], [])
+        self.assertIn("diagnostique la falla", result["messages"][-1].content)
+        self.assertIn("S/ 50.00", result["messages"][-1].content)
+        self.assertIn("generar un ticket", result["messages"][-1].content)
+        self.assertIn("repuestos quedan en S/ 0.00", result["messages"][-1].content)
+
+        result = invoke(graph, "Sí, confirma", initial=False)
+
+        self.assertEqual(result["outcome"], "quoted")
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
+        self.assertEqual(repository.created_ticket["customer_id"], 12)
+        self.assertIsNotNone(repository.saved_quote)
+        self.assertEqual(repository.saved_quote["labor_cost"], Decimal("50.00"))
+        self.assertEqual(repository.saved_quote["parts_cost"], Decimal("0.00"))
+        self.assertEqual(repository.saved_quote["total_amount"], Decimal("50.00"))
+        self.assertEqual(repository.saved_quote["parts"], [])
+        self.assertIn(
+            "Costo fijo de mano de obra: S/ 50.00",
+            repository.saved_quote["observations"],
+        )
+        self.assertIn("diagnóstico: S/ 50.00", result["messages"][-1].content)
+
+    def test_declined_diagnostic_quote_does_not_persist(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                confirmation=QuoteConfirmation(decision="decline"),
+            ),
+            retriever=MarkdownKnowledgeRetriever(documents=()),
+        )
+
+        suggestion = invoke(graph)
+        result = invoke(graph, "No, gracias", initial=False)
+
+        self.assertEqual(suggestion["outcome"], "awaiting_confirmation")
+        self.assertEqual(result["outcome"], "declined")
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+        self.assertIn("No guardé el ticket ni la cotización", result["messages"][-1].content)
+
+    def test_unknown_case_does_not_use_model_generated_parts(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(),
+            retriever=MarkdownKnowledgeRetriever(documents=()),
+        )
+
+        result = invoke(graph)
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertEqual(result["required_parts"], [])
+        self.assertEqual(repository.lookups, [])
+        self.assertIsNone(repository.created_ticket)
+
+    def test_slow_applications_with_unconfirmed_cause_quotes_diagnosis_only(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="REPAIR",
+                    title="Laptop lenta",
+                    failure_description="Demora en abrir aplicaciones.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="El almacenamiento podría limitar el rendimiento.",
+                    labor_task_type="diagnosis",
+                    required_parts=[
+                        PartRequest(search_term="SSD_1TB", quantity=1)
+                    ],
+                ),
+            ),
+        )
+
+        result = invoke(graph, "Mi laptop está lenta y demora en abrir aplicaciones.")
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertEqual(result["labor_task_type"], "diagnosis")
+        self.assertEqual(repository.lookups, [])
+        self.assertEqual(result["quote"]["labor_cost"], Decimal("50.00"))
+        self.assertEqual(result["quote"]["parts_cost"], Decimal("0.00"))
+        self.assertEqual(result["quote"]["parts"], [])
+        self.assertIn(
+            "Laptop lenta y demora en abrir aplicaciones",
+            [document["title"] for document in result["rag_documents"]],
+        )
+
+        result = invoke(graph, "Sí, guarda el ticket y el presupuesto.", initial=False)
+
+        self.assertEqual(result["outcome"], "quoted")
+        self.assertEqual(repository.saved_quote["labor_cost"], Decimal("50.00"))
+        self.assertEqual(repository.saved_quote["parts_cost"], Decimal("0.00"))
+        self.assertEqual(repository.saved_quote["total_amount"], Decimal("50.00"))
+        self.assertEqual(repository.saved_quote["parts"], [])
+
+    def test_suggests_single_in_stock_ssd_capacity_alternative(self):
+        repository = FakeRepository(
+            missing_parts={"SSD_1TB"},
+            alternatives=[
+                {
+                    "id": 19,
+                    "code": "SSD_500GB",
+                    "name": "SSD 500 GB",
+                    "unit_price": Decimal("45.00"),
+                    "current_stock": 3,
+                }
+            ],
+        )
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="REPAIR",
+                    title="Laptop lenta",
+                    failure_description="Demora en abrir aplicaciones.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="La unidad está degradada y requiere cambio.",
+                    labor_task_type="maintenance",
+                    required_parts=[
+                        PartRequest(search_term="SSD_1TB", quantity=1)
+                    ],
+                )
+            ),
+        )
+
+        result = invoke(graph, "Mi laptop está lenta y demora en abrir aplicaciones.")
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertEqual(
+            [part["code"] for part in result["quote"]["parts"]],
+            ["SSD_500GB"],
+        )
+        self.assertIn("SSD_1TB", result["inventory_substitutions"][0]["requested_code"])
+        self.assertIn(
+            "SSD_500GB",
+            result["messages"][-1].content,
+        )
+        answer = result["messages"][-1].content
+        self.assertIn("No tenemos disponible SSD_1TB, pero sí", answer)
+        self.assertIn("el técnico debe confirmar que sea compatible", answer)
+        self.assertNotIn("Guía consultada", answer)
+        self.assertNotIn("Orientación técnica preliminar", answer)
+        self.assertEqual(answer.count("SSD_500GB"), 1)
+        self.assertIsNone(repository.created_ticket)
+
+    def test_lists_multiple_available_same_family_options_without_quoting(self):
+        repository = FakeRepository(
+            missing_parts={"SSD_1TB"},
+            alternatives=[
+                {
+                    "id": 19,
+                    "code": "SSD_500GB",
+                    "name": "SSD 500 GB",
+                    "unit_price": Decimal("45.00"),
+                    "current_stock": 3,
+                },
+                {
+                    "id": 20,
+                    "code": "SSD_2TB",
+                    "name": "SSD 2 TB",
+                    "unit_price": Decimal("90.00"),
+                    "current_stock": 1,
+                },
+            ],
+        )
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="REPAIR",
+                    title="Laptop lenta",
+                    failure_description="Demora en abrir aplicaciones.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="Almacenamiento por revisar.",
+                    labor_task_type="maintenance",
+                    required_parts=[
+                        PartRequest(search_term="SSD_1TB", quantity=1)
+                    ],
+                )
+            ),
+        )
+
+        result = invoke(graph, "Mi laptop está lenta y demora en abrir aplicaciones.")
+
+        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertIn("SSD_500GB", result["messages"][-1].content)
+        self.assertIn("SSD_2TB", result["messages"][-1].content)
+        self.assertIsNone(repository.created_ticket)
+        self.assertIsNone(repository.saved_quote)
+
+    def test_reports_explicitly_when_requested_part_and_alternatives_are_out_of_stock(self):
+        repository = FakeRepository(
+            missing_parts={"SSD_1TB"},
+            alternatives=[
+                {
+                    "id": 19,
+                    "code": "SSD_500GB",
+                    "name": "SSD 500 GB",
+                    "unit_price": Decimal("45.00"),
+                    "current_stock": 0,
+                }
+            ],
+        )
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="REPAIR",
+                    title="Laptop lenta",
+                    failure_description="Demora en abrir aplicaciones.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="Almacenamiento por revisar.",
+                    labor_task_type="maintenance",
+                    required_parts=[
+                        PartRequest(search_term="SSD_1TB", quantity=1)
+                    ],
+                )
+            ),
+        )
+
+        result = invoke(graph, "Mi laptop está lenta y demora en abrir aplicaciones.")
+
+        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertIn(
+            "No tenemos stock suficiente del repuesto SSD_1TB",
+            result["messages"][-1].content,
+        )
+        self.assertIn("SSD_500GB", result["messages"][-1].content)
+        self.assertIn("stock 0", result["messages"][-1].content)
+        self.assertIsNone(repository.created_ticket)
 
     def test_unresolved_manual_alternatives_do_not_create_a_quote(self):
         repository = FakeRepository()
@@ -454,7 +712,7 @@ class MultiagentGraphTests(unittest.TestCase):
                 ),
                 diagnosis=TechnicalDiagnosis(
                     provisional_diagnosis="Posible fallo de alimentación.",
-                    estimated_labor_hours=Decimal("1.00"),
+                    labor_task_type="diagnosis",
                     required_parts=[],
                 ),
             ),
@@ -462,11 +720,14 @@ class MultiagentGraphTests(unittest.TestCase):
 
         result = invoke(graph, "La PC se apaga al encender.")
 
-        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertEqual(result["labor_task_type"], "diagnosis")
+        self.assertEqual(result["quote"]["labor_cost"], Decimal("50.00"))
+        self.assertEqual(result["quote"]["parts_cost"], Decimal("0.00"))
         self.assertEqual(repository.lookups, [])
         self.assertIsNone(repository.created_ticket)
         self.assertIsNone(repository.saved_quote)
-        self.assertIn("alternativas", result["messages"][-1].content)
+        self.assertIn("causa exacta", result["messages"][-1].content)
 
     def test_selected_manual_alternative_is_the_only_catalog_item_quoted(self):
         repository = FakeRepository()
@@ -482,7 +743,7 @@ class MultiagentGraphTests(unittest.TestCase):
                 ),
                 diagnosis=TechnicalDiagnosis(
                     provisional_diagnosis="Posible fallo de fuente.",
-                    estimated_labor_hours=Decimal("1.00"),
+                    labor_task_type="maintenance",
                     required_parts=[
                         PartRequest(search_term="Fuente_Poder", quantity=1)
                     ],
@@ -532,17 +793,9 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertIsNone(repository.created_ticket)
         self.assertIn("¿Qué modelo", result["messages"][-1].content)
 
-    def test_missing_labor_rate_does_not_create_ticket(self):
-        repository = FakeRepository()
-        graph = build_multiagent_graph(
-            settings=replace(make_settings(), labor_hourly_rate=None),
-            repository=repository,
-            model=make_model(),
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "LABOR_HOURLY_RATE"):
-            invoke(graph)
-        self.assertIsNone(repository.created_ticket)
+    def test_settings_reject_unknown_labor_task_type(self):
+        with self.assertRaisesRegex(ValueError, "Tipo de trabajo no reconocido"):
+            make_settings().labor_price_for("repair")
 
 
 if __name__ == "__main__":

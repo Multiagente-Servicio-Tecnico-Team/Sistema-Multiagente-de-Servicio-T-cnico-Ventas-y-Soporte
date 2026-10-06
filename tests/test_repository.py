@@ -118,6 +118,32 @@ class RepositoryTests(unittest.TestCase):
             "%Servicio Mantenimiento Contactos%",
         )
 
+    def test_spare_part_alternatives_lookup_uses_family_token(self):
+        session = FakeSession(
+            [
+                FakeResult(
+                    rows=[
+                        {
+                            "id": 19,
+                            "code": "SSD_500GB",
+                            "name": "SSD 500 GB",
+                            "unit_price": Decimal("45.00"),
+                            "current_stock": 3,
+                        }
+                    ]
+                )
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        alternatives = repository.find_spare_part_alternatives("SSD_1TB")
+
+        self.assertEqual(alternatives[0]["code"], "SSD_500GB")
+        query, parameters = session.calls[0]
+        self.assertIn("code ILIKE :pattern", query)
+        self.assertIn("name ILIKE :pattern", query)
+        self.assertEqual(parameters, {"pattern": "%SSD%"})
+
     def test_ticket_insert_uses_parameters_and_starts_in_diagnosis(self):
         session = FakeSession([FakeResult(scalar=55)])
         repository = ServiceRepository(lambda: session)
@@ -227,6 +253,49 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("quotes", session.calls[1][0])
         self.assertIn("QUOTED", session.calls[2][0])
         self.assertIn("quote_details", session.calls[3][0])
+        self.assertTrue(session.transaction.committed)
+
+    def test_diagnostic_quote_can_be_saved_without_spare_part_details(self):
+        session = FakeSession(
+            [
+                FakeResult(scalar=55),
+                FakeResult(scalar=77),
+                FakeResult(rowcount=1),
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        ticket_id, quote_id = repository.create_ticket_with_quote(
+            ticket_code="ST-123456789ABC",
+            customer_id=9,
+            title="Falla sin identificar",
+            failure_description="El equipo no inicia.",
+            request_type="REPAIR",
+            provisional_diagnosis="Requiere diagnóstico.",
+            labor_cost=Decimal("50.00"),
+            parts_cost=Decimal("0.00"),
+            total_amount=Decimal("50.00"),
+            observations="Tipo de mano de obra: diagnosis",
+            parts=[],
+        )
+
+        self.assertEqual((ticket_id, quote_id), (55, 77))
+        self.assertEqual(len(session.calls), 3)
+        self.assertIn("quotes", session.calls[1][0])
+        self.assertEqual(
+            session.calls[1][1]["labor_cost"],
+            Decimal("50.00"),
+        )
+        self.assertEqual(
+            session.calls[1][1]["parts_cost"],
+            Decimal("0.00"),
+        )
+        self.assertEqual(
+            session.calls[1][1]["total_amount"],
+            Decimal("50.00"),
+        )
+        self.assertNotIn("quote_details", "\n".join(query for query, _ in session.calls))
+        self.assertIn("QUOTED", session.calls[2][0])
         self.assertTrue(session.transaction.committed)
 
     def test_ticket_is_rolled_back_if_quote_insert_fails(self):

@@ -122,6 +122,36 @@ class ServiceRepository:
             ).mappings()
             return [dict(row) for row in rows]
 
+    def find_spare_part_alternatives(self, search_term: str) -> list[dict[str, Any]]:
+        term = search_term.strip()
+        category = re.split(r"[_\s-]+", term, maxsplit=1)[0].strip()
+        escaped_category = (
+            category.replace("!", "!!")
+            .replace("%", "!%")
+            .replace("_", "!_")
+        )
+        query = text(
+            """
+            SELECT id, code, name, unit_price, current_stock
+            FROM spare_parts
+            WHERE active IS TRUE
+              AND (
+                    code ILIKE :pattern ESCAPE '!'
+                    OR name ILIKE :pattern ESCAPE '!'
+              )
+            ORDER BY
+                CASE WHEN current_stock > 0 THEN 0 ELSE 1 END,
+                name
+            LIMIT 10
+            """
+        )
+        with self._session_factory() as session:
+            rows = session.execute(
+                query,
+                {"pattern": f"%{escaped_category}%"},
+            ).mappings()
+            return [dict(row) for row in rows]
+
     def create_ticket_with_quote(
         self,
         *,

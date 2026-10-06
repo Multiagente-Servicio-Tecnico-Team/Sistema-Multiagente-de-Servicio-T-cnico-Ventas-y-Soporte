@@ -66,3 +66,9 @@ para personal técnico, no instrucciones de reparación para el cliente.
   - **Solución**: El técnico debe probar cargador, conector y batería; reemplazar la batería solo tras confirmar el diagnóstico y el modelo.
   - **Componente/Servicio**: `REP-BAT-L2023`.
   - **Palabras clave**: batería, no carga, no retiene carga, se descarga rápido, cargador
+
+- **Caso 10: Laptop lenta y demora en abrir aplicaciones**
+  - **Diagnóstico**: Posible unidad de almacenamiento mecánica lenta o degradada, poco espacio disponible o exceso de aplicaciones al inicio. Se debe revisar el estado de la unidad antes de recomendar un reemplazo.
+  - **Solución**: El técnico debe medir el estado y rendimiento del almacenamiento, revisar procesos de inicio y confirmar compatibilidad del equipo. Si se confirma que la unidad limita el rendimiento, sugerir migración a SSD.
+  - **Componente/Servicio**: `SSD_1TB`.
+  - **Palabras clave**: laptop lenta, demora en abrir aplicaciones, aplicaciones tardan, programas lentos, tarda en iniciar, disco lento, HDD, SSD

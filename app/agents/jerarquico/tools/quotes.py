@@ -4,17 +4,17 @@ from typing import Any
 
 def calculate_quote(
     *,
-    labor_hours: Decimal,
-    labor_hourly_rate: Decimal,
+    labor_cost: Decimal,
+    labor_task_type: str,
     parts: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if not parts:
-        raise ValueError("No se puede calcular una cotización sin artículos.")
+    if labor_task_type not in {"maintenance", "diagnosis"}:
+        raise ValueError(f"Tipo de mano de obra no reconocido: {labor_task_type}.")
     money = Decimal("0.01")
-    labor_cost = (labor_hours * labor_hourly_rate).quantize(
-        money,
-        rounding=ROUND_HALF_UP,
-    )
+    labor_cost = Decimal(str(labor_cost))
+    if not labor_cost.is_finite() or labor_cost <= 0:
+        raise ValueError("La mano de obra debe tener un precio fijo positivo.")
+    labor_cost = labor_cost.quantize(money, rounding=ROUND_HALF_UP)
     quote_parts = []
     for part in parts:
         quantity = int(part["quantity"])
@@ -41,8 +41,7 @@ def calculate_quote(
             "El importe calculado excede el límite del esquema de cotizaciones."
         )
     return {
-        "labor_hours": labor_hours,
-        "labor_hourly_rate": labor_hourly_rate,
+        "labor_task_type": labor_task_type,
         "labor_cost": labor_cost,
         "parts_cost": parts_cost,
         "total_amount": total_amount,

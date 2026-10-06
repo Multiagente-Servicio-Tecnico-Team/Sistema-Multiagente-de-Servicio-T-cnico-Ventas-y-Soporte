@@ -1,4 +1,3 @@
-from decimal import Decimal
 from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import AnyMessage
@@ -19,15 +18,17 @@ class ServiceState(TypedDict, total=False):
         "customer_not_found",
     ]
     request_type: str
+    labor_task_type: Literal["maintenance", "diagnosis"]
     title: str
     failure_description: str
     provisional_diagnosis: str
-    estimated_labor_hours: Decimal
     rag_context: str
     required_parts: list[dict[str, Any]]
     manual_selection_complete: bool
     manual_selection_error: str
     matched_parts: list[dict[str, Any]]
+    inventory_substitutions: list[dict[str, Any]]
+    inventory_options_message: str
     rag_documents: list[dict[str, Any]]
     awaiting_quote_confirmation: bool
     quote_changed: bool
