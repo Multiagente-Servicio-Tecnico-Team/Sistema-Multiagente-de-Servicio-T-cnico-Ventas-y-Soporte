@@ -106,8 +106,8 @@ function reducer(state, action) {
     case "login":
       return { ...state, session: action.session, signedOut: false };
     case "logout":
-      // signedOut distingue un cierre de sesión voluntario de un acceso sin sesión.
-      return { ...state, session: null, signedOut: true };
+      // signedOut distingue un cierre de sesión voluntario de un acceso sin sesión o de una sesión vencida.
+      return { ...state, session: null, signedOut: action.voluntary !== false };
     case "clearSignedOut":
       return state.signedOut ? { ...state, signedOut: false } : state;
     case "createTicket": {
@@ -169,9 +169,10 @@ export function StoreProvider({ children }) {
     dispatch({ type: "login", session });
   }, []);
 
-  const logout = useCallback(() => {
+  /** `voluntary: false` cuando el servidor dio la sesión por terminada: se pide acceso y se vuelve a la página. */
+  const logout = useCallback(({ voluntary = true } = {}) => {
     writeSession(null);
-    dispatch({ type: "logout" });
+    dispatch({ type: "logout", voluntary });
   }, []);
 
   const value = useMemo(() => ({ ...state, dispatch, login, logout }), [state, login, logout]);

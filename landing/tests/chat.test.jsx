@@ -1,13 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import Assistant from "../src/pages/portal/Assistant.jsx";
 import { StoreProvider } from "../src/data/store.jsx";
+import { RequireRole } from "../src/components/ui.jsx";
 import { CHAT_MESSAGES, ChatError, createChatApi } from "../src/api/chat.js";
 
 const future = { v7_startTransition: true, v7_relativeSplatPath: true };
 const QUOTE = { status: "proposed", currency: "PEN", total: "260.00", lines: [{ label: "Instalación de SSD", amount: "80.00" }, { label: "SSD de 480 GB", amount: "180.00" }] };
+
+function Acceso() {
+  const { state } = useLocation();
+  return <h1>Acceso{state?.from ? ` · vuelve a ${state.from}` : ""}</h1>;
+}
 
 function renderChat(api) {
   sessionStorage.setItem("techfix.session", JSON.stringify({ role: "client", name: "Ana Torres", email: "ana@demo.pe" }));
@@ -15,8 +21,9 @@ function renderChat(api) {
     <MemoryRouter future={future} initialEntries={["/portal/asistente"]}>
       <StoreProvider>
         <Routes>
-          <Route path="/portal/asistente" element={<Assistant api={api} />} />
-          <Route path="/portal/acceso" element={<h1>Acceso</h1>} />
+          <Route path="/portal/asistente" element={<RequireRole role="client"><Assistant api={api} /></RequireRole>} />
+          <Route path="/" element={<h1>Landing</h1>} />
+          <Route path="/portal/acceso" element={<Acceso />} />
         </Routes>
       </StoreProvider>
     </MemoryRouter>
@@ -79,7 +86,7 @@ describe("asistente conectado", () => {
     const user = userEvent.setup();
     renderChat(api);
     await write(user, "Mi laptop no enciende desde ayer");
-    expect(await screen.findByRole("heading", { name: "Acceso" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Acceso · vuelve a /portal/asistente" })).toBeInTheDocument();
     expect(sessionStorage.getItem("techfix.session")).toBeNull();
   });
 

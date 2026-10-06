@@ -84,7 +84,7 @@ export default function LiveChat({ api = defaultChatApi }) {
       if (err?.code === "session_required") {
         // La sesión del servidor terminó: se cierra la local y se vuelve al chat después de ingresar.
         await authApi.logout?.();
-        logout();
+        logout({ voluntary: false });
         navigate("/portal/acceso", { replace: true, state: { from: "/portal/asistente" } });
         return;
       }
