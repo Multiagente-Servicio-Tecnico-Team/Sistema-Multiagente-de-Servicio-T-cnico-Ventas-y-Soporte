@@ -115,12 +115,13 @@ npm --prefix landing test
 ```
 
 ```bash
-.venv/Scripts/python -m pytest tests --ignore=tests/test_database.py --ignore=tests/test_email.py
+.venv/Scripts/python -m pytest
 ```
 
-- `tests/test_database.py` y `tests/test_email.py` son scripts manuales que conectan a PostgreSQL y SMTP reales.
-- Las pruebas de la red descentralizada necesitan `GROQ_API_KEY` definida; `tests/test_e2e_decentralized.py`
-  llama al modelo real.
+- Las pruebas de `tests/` no usan servicios externos: no necesitan PostgreSQL, SMTP ni claves.
+- Las pruebas marcadas `e2e` llaman al modelo real de Groq y se omiten salvo que `GROQ_API_KEY` esté exportada
+  en la terminal; para ejecutar solo esas: `pytest -m e2e`.
+- `test_database.py` y `test_email.py` (raíz) son scripts manuales que conectan a PostgreSQL y SMTP reales.
 - API de cuentas con Postman o Newman: `npx newman run postman/techfix-auth.postman_collection.json`.
 
 ## Seguridad
