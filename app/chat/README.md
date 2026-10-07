@@ -50,11 +50,15 @@ Respuesta `200`:
 
 ## API integrada
 
-El punto de entrada del chat ya construye y selecciona los motores:
+El punto de entrada recomendado ejecuta cuentas y chat en el mismo servidor:
 
 ```bash
-.venv/Scripts/python -m uvicorn app.main:app --host localhost --port 8001
+.venv/Scripts/python -m uvicorn app.combined:create_app --factory --host localhost --port 8000
 ```
+
+Las rutas de cuentas quedan bajo `/auth/*`; el chat conserva `/api/chat` y
+`/api/chat/patterns`. `app.main:app` sigue disponible para ejecutar solo la API
+de chat durante pruebas o desarrollo aislado.
 
 El portal comparte el contrato, pero los motores no tienen la misma paridad de
 persistencia: Jerárquico y Orquestador conectan sus herramientas de negocio a
@@ -77,8 +81,8 @@ contienen el patrón y UUID de conversación, no ID de cliente, correo ni mensaj
 La API de referencia es independiente y no es el punto de entrada usado por el
 selector de patrones.
 
-En el frontend, definir `VITE_CHAT_URL=http://localhost:8001` en `landing/.env` (además de `VITE_API_URL`).
-Frontend, API de cuentas y chat deben usar el host `localhost` para que el navegador envíe la cookie.
+En el frontend, definir `VITE_API_URL=http://localhost:8000/auth` y
+`VITE_CHAT_URL=http://localhost:8000` en `landing/.env`.
 
 ## Pruebas
 

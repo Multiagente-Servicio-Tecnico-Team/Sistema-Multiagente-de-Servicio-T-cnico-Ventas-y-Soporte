@@ -14,6 +14,7 @@ persistencia de inventario y presupuestos está disponible en los dos primeros p
 | --- | --- | --- |
 | Landing, portal del cliente y panel del taller (React) | [`landing/`](landing/README.md) | En `main` |
 | Cuentas: registro, inicio de sesión, recuperación de contraseña | [`app/accounts/`](app/accounts/README.md) | En `main` |
+| API unificada de cuentas y chat | [`app/combined.py`](app/combined.py) | Integrada |
 | Sesión reutilizable y contrato común del chat (`POST /api/chat`) | [`app/chat/`](app/chat/README.md), [`app/main.py`](app/main.py) | Integrados |
 | Agente de ventas, soporte y trazas locales | `app/agents/sales.py`, `app/agents/support.py`, `app/tracing.py` | En `main` |
 | Patrón de Red Descentralizada | [`app/agents/decentralized/`](app/agents/decentralized/) | Integrado; herramientas aún simuladas |
@@ -49,11 +50,11 @@ decisiones, validación y limitaciones del bloque.
 
 ```text
  Navegador (React + Vite, landing/)
-   │  registro, inicio de sesión, recuperación        │  chat del portal (/portal/asistente)
-   ▼                                                  ▼
- API de cuentas (app/accounts) ── cookie de sesión ──▶ API del patrón: POST /api/chat
-   │  bcrypt, tokens de recuperación                   │  SessionGuard identifica al cliente por la cookie
-   ▼                                                  ▼
+   │ cuentas: /auth/*       │ chat: /api/chat
+   ▼                        ▼
+ API unificada (app/combined.py): cuentas + patrones LangGraph
+   │ cookie HttpOnly compartida; SessionGuard valida la sesión
+   ▼
  PostgreSQL: users · recovery_tokens · tickets · quotes · spare_parts …   ◀── grafo LangGraph del patrón
                                                                              │ herramientas · LangSmith
 ```
@@ -67,6 +68,7 @@ decisiones, validación y limitaciones del bloque.
 ```text
 app/
 ├── accounts/        API de cuentas (FastAPI): /registro, /login, /logout, /me, /recuperar, /restablecer
+├── combined.py      Punto de entrada unificado: monta cuentas en /auth junto al chat
 ├── chat/            Contrato de /api/chat, patrón de referencia y modelo de tickets
 ├── agents/
 │   ├── jerarquico/     Supervisor, soporte, ventas, almacén, RAG y persistencia
@@ -117,12 +119,10 @@ La ingesta descarga el modelo FastEmbed la primera vez y guarda el índice en
 `data/chroma/`, que está excluido de Git. Debe repetirse cuando cambie el
 contenido de `data/knowledge/`.
 
-El frontend usa `landing/.env` (ver `landing/.env.example`): `VITE_API_URL` para la API de cuentas y
-`VITE_CHAT_URL` para el patrón del chat. Los valores locales por defecto son
-`http://localhost:8000` y `http://localhost:8001`; Vite los carga al iniciar,
-así que reinicia el servidor frontend después de modificarlos.
-Las dos APIs deben usar el mismo `AUTH_SECRET` (mínimo 32 caracteres); para
-desarrollo HTTP local, configurar `AUTH_SECURE_COOKIE=false`.
+El frontend usa `landing/.env` (ver `landing/.env.example`): `VITE_API_URL` apunta a
+`/auth` y `VITE_CHAT_URL` al mismo origen del chat. Los valores locales por defecto
+son `http://localhost:8000/auth` y `http://localhost:8000`; Vite los carga al
+iniciar, así que reinicia el servidor frontend después de modificarlos.
 
 ## Puesta en marcha
 
@@ -132,11 +132,7 @@ python -m venv .venv
 ```
 
 ```bash
-.venv/Scripts/python -m uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
-```
-
-```bash
-.venv/Scripts/python -m uvicorn app.main:app --host localhost --port 8001
+.venv/Scripts/python -m uvicorn app.combined:create_app --factory --host localhost --port 8000
 ```
 
 ```bash
@@ -147,9 +143,9 @@ npm --prefix landing install
 npm --prefix landing run dev
 ```
 
-Abrir http://localhost:5173. Usar `localhost` (no `127.0.0.1`) en todas las URLs para que el navegador envíe la
-cookie de sesión a ambas APIs. Configurar `VITE_API_URL=http://localhost:8000` y
-`VITE_CHAT_URL=http://localhost:8001` en `landing/.env`.
+Abrir http://localhost:5173. El proceso unificado expone las rutas de cuentas
+en `/auth/*` y el chat en `/api/chat`; ambos clientes usan el mismo host y puerto.
+Para los endpoints independientes, ver la documentación de sus módulos.
 
 ## Pruebas
 

@@ -99,8 +99,8 @@ npm --prefix landing run dev
 Abrir http://localhost:5173. Para usar un backend local, crear `landing/.env` a partir de `.env.example`:
 
 ```bash
-VITE_API_URL=http://localhost:8000
-VITE_CHAT_URL=http://localhost:8001
+VITE_API_URL=http://localhost:8000/auth
+VITE_CHAT_URL=http://localhost:8000
 ```
 
 ## Pruebas
@@ -121,8 +121,8 @@ npm --prefix landing run build
 
 Genera `landing/dist/` (HTML, CSS y JS estáticos). Para publicarlo:
 
-1. Definir `VITE_API_URL` y `VITE_CHAT_URL` con las URLs públicas de cuentas y chat **antes** de compilar
-   (Vite las incrusta en el build).
+1. Definir `VITE_API_URL` (incluyendo `/auth`) y `VITE_CHAT_URL` con la URL pública del backend unificado
+   **antes** de compilar (Vite las incrusta en el build).
 2. Servir `dist/` en cualquier hosting estático (Nginx, Netlify, Vercel, GitHub Pages, S3 + CloudFront…).
 3. Configurar la redirección de todas las rutas a `index.html` (aplicación de una sola página), por ejemplo en
    Nginx: `try_files $uri /index.html;`.
@@ -145,6 +145,6 @@ presupuesto (aceptar o rechazar) y el ticket creado. Si la sesión terminó llev
 errores temporales ofrece reintentar. Para probarlo con el patrón de referencia:
 
 ```bash
-VITE_API_URL=http://localhost:8000
-VITE_CHAT_URL=http://localhost:8001
+VITE_API_URL=http://localhost:8000/auth
+VITE_CHAT_URL=http://localhost:8000
 ```
