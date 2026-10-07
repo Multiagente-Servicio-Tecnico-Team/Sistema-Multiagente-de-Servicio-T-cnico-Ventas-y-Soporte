@@ -8,6 +8,12 @@ class AgentState(TypedDict, total=False):
     # Historial compartido entre agentes
     messages: Annotated[list[AnyMessage], add_messages]
 
+    # Inicio del turno actual, para no confundir herramientas de turnos anteriores.
+    turn_start_index: int
+    quote_scope: str
+    quote: dict[str, Any]
+    inventory_query: str | None
+
     # Agente actual y siguiente
     current_agent: str
     next_agent: str | None

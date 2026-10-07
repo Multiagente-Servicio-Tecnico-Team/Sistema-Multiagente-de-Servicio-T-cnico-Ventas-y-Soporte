@@ -13,9 +13,17 @@ from langchain_core.messages import (
 
 from app.rag.tools import consultar_base_conocimiento
 from app.agents.decentralized.state import AgentState
+from app.agents.decentralized.policy import (
+    ultimo_usuario, es_compatibilidad, es_atencion, handoff, cotizacion_verificada,
+    es_inventario, es_marcador,
+    normalizar,
+    nombre_inventario,
+)
+from app.agents.decentralized.tools.soporte_tools import transferir_a_soporte
 from app.agents.decentralized.tools.ventas_tools import (
     generar_cotizacion,
     transferir_a_tecnico,
+    solicitar_inventario,
 )
 
 
@@ -41,6 +49,8 @@ llm = ChatGroq(
 # =========================================================
 
 ventas_tools = [
+    solicitar_inventario,
+    transferir_a_soporte,
     generar_cotizacion,
     transferir_a_tecnico,
     consultar_base_conocimiento,
@@ -105,6 +115,7 @@ def validar_inventario(state: AgentState):
                 raise ValueError("Disponibilidad inconsistente")
 
             inventario.append({
+                "encontrado": resultado.get("found", True),
                 "nombre": nombre,
                 "cantidad": cantidad,
                 "stock": stock,
@@ -160,6 +171,9 @@ REGLAS:
   por tu cuenta.
 - No repitas herramientas ya ejecutadas.
 - Si se necesita diagnóstico, transfiere a Técnico.
+- Si la nueva pregunta es sobre un ticket, atención general o
+  revisión presencial, utiliza transferir_a_soporte.
+- No puedes reservar citas ni confirmar que se registró una visita.
 
 RAG:
 - Consulta la base de conocimiento solo cuando
@@ -240,6 +254,7 @@ def construir_contexto_ventas(state: AgentState):
     messages = state["messages"]
 
     nombres_tools = {
+        "transferir_a_soporte",
         "generar_cotizacion",
         "transferir_a_tecnico",
         "consultar_base_conocimiento",
@@ -260,6 +275,10 @@ def construir_contexto_ventas(state: AgentState):
 
         elif isinstance(mensaje, AIMessage):
             llamadas = mensaje.tool_calls
+
+            if not llamadas:
+                contexto.append(mensaje)
+                continue
 
             if llamadas and all(
                 llamada["id"] in llamadas_ventas
@@ -296,6 +315,26 @@ def ventas_node(state: AgentState):
     el contexto del inventario validado.
     """
 
+    user = ultimo_usuario(state)
+    if es_marcador(user):
+        return {"current_agent": "ventas", "messages": [AIMessage(content="Sustituye el texto entre corchetes por el nombre real del repuesto. No puedo consultar un marcador de ejemplo.")]}
+    if es_compatibilidad(user):
+        return handoff("ventas", "transferir_a_tecnico", motivo="Verificar compatibilidad con evidencia técnica")
+    if es_atencion(user):
+        return handoff("ventas", "transferir_a_soporte", motivo="Orientación de atención presencial")
+    reference = nombre_inventario(user)
+    previous_names = [p.get("name", "") for p in state.get("required_parts", [])]
+    previous_names.extend(r.get("requested_name", "") for r in state.get("inventory_results", []))
+    corrected_reference = reference is not None and not any(
+        normalizar(reference).replace(" ", "") == normalizar(name).replace(" ", "")
+        for name in previous_names
+    )
+    if (es_inventario(user) or corrected_reference) and not any(
+        isinstance(m, ToolMessage) and m.name == "consultar_inventario"
+        for m in state["messages"][state.get("turn_start_index", 0):]
+    ):
+        return handoff("ventas", "solicitar_inventario", consulta=user)
+
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         *construir_contexto_ventas(state),
@@ -303,7 +342,21 @@ def ventas_node(state: AgentState):
     ]
 
     try:
+        inventory, problems = validar_inventario(state)
+        problems.extend(e for e in state.get("errors", []) if "inventario" in e.lower())
+        if inventory or problems or state.get("quote_scope") or state.get("inventory_pending"):
+            quote, reply = cotizacion_verificada(inventory, problems, state.get("inventory_pending", False), state.get("quote_scope"))
+            if "instalacion" in normalizar(user) and any(w in normalizar(user) for w in ("incluye", "incluido", "solo", "importe")):
+                if any(p["subtotal"] is not None for p in quote["parts"]):
+                    reply = "El subtotal mostrado corresponde solo a los repuestos disponibles. No incluye instalación ni mano de obra; su tarifa sigue pendiente de validación."
+                else:
+                    reply = "Todavía no hay un importe de repuestos disponibles confirmado. La tarifa de instalación y mano de obra también está pendiente de validación."
+            return {"current_agent": "ventas", "quote": quote, "messages": [AIMessage(content=reply)]}
         response = ventas_llm.invoke(messages)
+
+        if not response.tool_calls:
+            quote, reply = cotizacion_verificada([], [])
+            return {"current_agent": "ventas", "quote": quote, "messages": [AIMessage(content=reply)]}
 
         return {
             "messages": [response],

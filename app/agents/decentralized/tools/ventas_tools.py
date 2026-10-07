@@ -2,6 +2,12 @@ import unicodedata
 from langchain_core.tools import tool
 
 
+@tool
+def solicitar_inventario(consulta: str) -> dict:
+    """Deriva a Almacén una consulta comercial de disponibilidad, sin inventar repuestos."""
+    return {"accion": "CONSULTAR_DISPONIBILIDAD", "consulta": consulta}
+
+
 def normalizar_servicio(servicio: str) -> str:
     servicio = servicio.lower().strip()
 

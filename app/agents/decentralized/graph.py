@@ -5,6 +5,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.agents.decentralized.state import AgentState
+from app.agents.decentralized.policy import repuesto_confirmado
 from app.agents.decentralized.soporte import soporte_node, soporte_tools
 from app.agents.decentralized.tecnico import tecnico_node, tecnico_tools
 from app.agents.decentralized.ventas import ventas_node, ventas_tools
@@ -14,6 +15,8 @@ MAX_HANDOFFS = 5
 MAX_TOOL_ITERATIONS = 6
 
 HANDOFF_TOOLS = {
+    "solicitar_inventario": "almacen",
+    "transferir_a_soporte": "soporte",
     "transferir_a_tecnico": "tecnico",
     "transferir_a_ventas": "ventas",
     "transferir_a_almacen": "almacen",
@@ -68,6 +71,9 @@ def extraer_repuesto_handoff(messages):
 def registrar_handoff(state: AgentState, origen: str):
     """Audita herramientas y transferencias entre agentes."""
     destino = detectar_handoff(state["messages"])
+    # Almacén entrega datos verificados a Ventas en la misma ejecución.
+    if origen == "almacen" and destino is None and state.get("required_parts") and not state.get("inventory_pending", True):
+        destino = "ventas"
     historial = list(state.get("handoff_history", []))
     contador = state.get("handoff_count", 0)
     errores = list(state.get("errors", []))
@@ -88,6 +94,24 @@ def registrar_handoff(state: AgentState, origen: str):
 
     if destino is None:
         return {"next_agent": origen, "tool_iterations": iteraciones}
+
+    if origen == "ventas" and destino == "almacen":
+        for mensaje in reversed(state["messages"]):
+            if not isinstance(mensaje, ToolMessage):
+                break
+            if mensaje.name == "solicitar_inventario" and mensaje.status != "error":
+                try:
+                    datos = json.loads(mensaje.content)
+                except (ValueError, TypeError):
+                    datos = {}
+                if isinstance(datos, dict) and isinstance(datos.get("consulta"), str):
+                    if contador >= MAX_HANDOFFS:
+                        return {"next_agent": "finalizar", "tool_iterations": iteraciones,
+                                "messages": [AIMessage(content="Límite de transferencias alcanzado.")]}
+                    historial.append({"origen": "ventas", "destino": "almacen"})
+                    return {"next_agent": "almacen", "inventory_query": datos["consulta"],
+                            "handoff_count": contador + 1, "handoff_history": historial,
+                            "tool_iterations": iteraciones}
 
     if destino == origen:
         errores.append("Transferencia al mismo agente")
@@ -111,7 +135,39 @@ def registrar_handoff(state: AgentState, origen: str):
         }
 
     repuesto_pendiente = None
-    if origen == "tecnico" and destino == "almacen":
+    if origen == "tecnico" and destino == "ventas":
+        datos = None
+        for mensaje in reversed(state["messages"]):
+            if not isinstance(mensaje, ToolMessage):
+                break
+            if mensaje.name == "transferir_a_ventas" and mensaje.status != "error":
+                try:
+                    datos = json.loads(mensaje.content)
+                except (ValueError, TypeError):
+                    pass
+                break
+        alcance = datos.get("alcance") if isinstance(datos, dict) else None
+        if alcance == "repuestos":
+            nombre = datos.get("nombre_repuesto")
+            cantidad = datos.get("cantidad")
+            if repuesto_confirmado(state, nombre) and type(cantidad) is int and cantidad > 0:
+                repuesto_pendiente = {"name": nombre.strip(), "quantity": cantidad}
+                destino = "almacen"
+            else:
+                return {"next_agent": "finalizar", "tool_iterations": iteraciones,
+                        "messages": [AIMessage(content=(
+                            "Para verificar disponibilidad y cotizar el reemplazo, "
+                            "¿qué tipo o modelo exacto de repuesto indicó el técnico? "
+                            "Si no lo sabes, necesitamos una revisión para identificarlo."
+                        ))]}
+        elif alcance != "solo_servicio":
+            return {"next_agent": "finalizar", "tool_iterations": iteraciones,
+                    "messages": [AIMessage(content=(
+                        "Antes de cotizar, necesito aclarar si solicitas únicamente "
+                        "una revisión de diagnóstico o una reparación con repuestos pendientes de verificar."
+                    ))]}
+
+    if origen == "tecnico" and destino == "almacen" and repuesto_pendiente is None:
         repuesto_pendiente = extraer_repuesto_handoff(state["messages"])
         if repuesto_pendiente is None:
             errores.append("Transferencia a Almacén sin repuesto válido")
@@ -123,6 +179,13 @@ def registrar_handoff(state: AgentState, origen: str):
                     "No fue posible identificar un repuesto válido para consultar."
                 ))],
             }
+
+    if repuesto_pendiente is not None and not repuesto_confirmado(state, repuesto_pendiente["name"]):
+        return {"next_agent": "finalizar", "tool_iterations": iteraciones,
+                "messages": [AIMessage(content=(
+                    "¿Qué tipo o modelo exacto de repuesto indicó el técnico? "
+                    "No puedo elegir una variante ni confirmar compatibilidad solo con un nombre genérico."
+                ))]}
 
     # Impedir cotizaciones mientras falte verificar inventario.
     if (
@@ -154,6 +217,11 @@ def registrar_handoff(state: AgentState, origen: str):
             repuestos.append(repuesto_pendiente)
         actualizacion["required_parts"] = repuestos
         actualizacion["inventory_pending"] = True
+        actualizacion["quote_scope"] = "repuestos"
+    elif origen == "tecnico" and destino == "ventas":
+        actualizacion["quote_scope"] = "solo_servicio"
+    elif origen == "almacen" and destino == "ventas":
+        actualizacion["quote_scope"] = "repuestos"
     return actualizacion
 
 
@@ -293,7 +361,16 @@ builder.add_node("auditar_tecnico", auditar_tecnico)
 builder.add_node("auditar_ventas", auditar_ventas)
 builder.add_node("auditar_almacen", auditar_almacen)
 
-builder.add_edge(START, "soporte")
+def route_entry(state: AgentState):
+    """Retoma al agente activo; las conversaciones nuevas empiezan en Soporte."""
+    agente = state.get("current_agent", "soporte")
+    return agente if agente in {"soporte", "tecnico", "almacen", "ventas"} else "soporte"
+
+
+builder.add_conditional_edges(START, route_entry, {
+    "soporte": "soporte", "tecnico": "tecnico",
+    "almacen": "almacen", "ventas": "ventas",
+})
 for agente in ("soporte", "tecnico", "almacen", "ventas"):
     builder.add_conditional_edges(
         agente,
