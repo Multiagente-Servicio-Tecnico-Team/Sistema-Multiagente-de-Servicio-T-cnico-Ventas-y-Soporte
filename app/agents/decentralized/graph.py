@@ -1,5 +1,6 @@
 
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 
@@ -149,93 +150,70 @@ def route_next_agent(state: AgentState):
 # CONSTRUCCIÓN DEL GRAFO
 # =========================================================
 
-builder = StateGraph(AgentState)
+def build_graph(*, checkpointer=None):
+    builder = StateGraph(AgentState)
 
-# Agentes
-builder.add_node("soporte", soporte_node)
-builder.add_node("tecnico", tecnico_node)
-builder.add_node("ventas", ventas_node)
+    # Agentes
+    builder.add_node("soporte", soporte_node)
+    builder.add_node("tecnico", tecnico_node)
+    builder.add_node("ventas", ventas_node)
 
-# Herramientas con manejo de errores
-builder.add_node(
-    "soporte_tools",
-    ToolNode(soporte_tools, handle_tool_errors=True)
-)
-
-builder.add_node(
-    "tecnico_tools",
-    ToolNode(tecnico_tools, handle_tool_errors=True)
-)
-
-builder.add_node(
-    "ventas_tools",
-    ToolNode(ventas_tools, handle_tool_errors=True)
-)
-# Auditoría de transferencias
-builder.add_node("auditar_soporte", auditar_soporte)
-builder.add_node("auditar_tecnico", auditar_tecnico)
-builder.add_node("auditar_ventas", auditar_ventas)
-
-
-# =========================================================
-# PUNTO DE ENTRADA
-# =========================================================
-
-builder.add_edge(START, "soporte")
-
-
-# =========================================================
-# EJECUCIÓN DE LOS AGENTES
-# =========================================================
-
-for agente in ("soporte", "tecnico", "ventas"):
-    builder.add_conditional_edges(
-        agente,
-        tools_condition,
-        {
-            "tools": f"{agente}_tools",
-            "__end__": END,
-        },
+    # Herramientas con manejo de errores
+    builder.add_node(
+        "soporte_tools",
+        ToolNode(soporte_tools, handle_tool_errors=True)
     )
 
-
-# =========================================================
-# EJECUCIÓN Y AUDITORÍA DE HERRAMIENTAS
-# =========================================================
-
-builder.add_edge("soporte_tools", "auditar_soporte")
-builder.add_edge("tecnico_tools", "auditar_tecnico")
-builder.add_edge("ventas_tools", "auditar_ventas")
-
-
-# =========================================================
-# ENRUTAMIENTO DESCENTRALIZADO
-# =========================================================
-
-# Cada agente puede continuar o transferir el control.
-# No existe un supervisor que tome las decisiones.
-
-rutas = {
-    "soporte": "soporte",
-    "tecnico": "tecnico",
-    "ventas": "ventas",
-    "finalizar": END,
-}
-
-for auditor in (
-    "auditar_soporte",
-    "auditar_tecnico",
-    "auditar_ventas",
-):
-    builder.add_conditional_edges(
-        auditor,
-        route_next_agent,
-        rutas,
+    builder.add_node(
+        "tecnico_tools",
+        ToolNode(tecnico_tools, handle_tool_errors=True)
     )
 
+    builder.add_node(
+        "ventas_tools",
+        ToolNode(ventas_tools, handle_tool_errors=True)
+    )
+    # Auditoría de transferencias
+    builder.add_node("auditar_soporte", auditar_soporte)
+    builder.add_node("auditar_tecnico", auditar_tecnico)
+    builder.add_node("auditar_ventas", auditar_ventas)
 
-# =========================================================
-# COMPILACIÓN
-# =========================================================
+    # Punto de entrada
+    builder.add_edge(START, "soporte")
 
-graph = builder.compile()
+    for agente in ("soporte", "tecnico", "ventas"):
+        builder.add_conditional_edges(
+            agente,
+            tools_condition,
+            {
+                "tools": f"{agente}_tools",
+                "__end__": END,
+            },
+        )
+
+    builder.add_edge("soporte_tools", "auditar_soporte")
+    builder.add_edge("tecnico_tools", "auditar_tecnico")
+    builder.add_edge("ventas_tools", "auditar_ventas")
+
+    rutas = {
+        "soporte": "soporte",
+        "tecnico": "tecnico",
+        "ventas": "ventas",
+        "finalizar": END,
+    }
+
+    for auditor in (
+        "auditar_soporte",
+        "auditar_tecnico",
+        "auditar_ventas",
+    ):
+        builder.add_conditional_edges(
+            auditor,
+            route_next_agent,
+            rutas,
+        )
+
+    return builder.compile(checkpointer=checkpointer)
+
+
+graph = build_graph(checkpointer=MemorySaver())

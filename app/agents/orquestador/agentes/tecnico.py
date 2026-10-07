@@ -1,6 +1,7 @@
 from app.agents.orquestador.graph.state import AgentState, PartRequest, TechnicalDiagnosis
 from app.agents.orquestador.knowledge import retrieve_technical_knowledge
-from app.config import CURRENCY, create_chat_model
+from app.config import create_chat_model
+from app.settings import load_settings
 
 
 TECHNICAL_SYSTEM_PROMPT = f"""
@@ -8,10 +9,11 @@ Eres el agente de soporte técnico de un taller. Responde todos los campos en es
 Emite un diagnóstico provisional,
 no afirmes haber inspeccionado físicamente el equipo. Basa recomendaciones de
 fallas y componentes en el contexto recuperado del catálogo técnico Markdown.
-Ese catálogo es orientativo, no confirma la causa ni compatibilidad. La moneda
-para expresar la mano de obra es {CURRENCY} (soles peruanos, S/). No inventes compatibilidad, disponibilidad ni precios. Solicita aclaración si marca,
-modelo o síntomas no permiten elegir repuestos con prudencia. Devuelve el costo de
-mano de obra como estimación numérica en la moneda configurada por el negocio.
+Ese catálogo es orientativo, no confirma la causa ni compatibilidad. La mano de obra tiene precios fijos configurados por tipo de tarea. Indica
+labor_task_type="diagnosis" cuando no se conoce la causa exacta o se requiere
+inspección y no propongas repuestos en ese caso. Indica
+labor_task_type="maintenance" solo si el trabajo o cambio de componente ya está
+determinado. No inventes precios, compatibilidad ni disponibilidad.
 """.strip()
 
 
@@ -33,8 +35,15 @@ def tecnico_node(state: AgentState) -> dict[str, object]:
             ),
         ]
     )
+    labor_task_type = result.labor_task_type
+    required_parts = (
+        []
+        if labor_task_type == "diagnosis"
+        else [part.model_dump() for part in result.parts]
+    )
     return {
         "diagnosis": result.diagnosis,
-        "labor_cost": result.labor_cost,
-        "requested_parts": [part.model_dump() for part in result.parts],
+        "labor_task_type": labor_task_type,
+        "labor_cost": load_settings().labor_price_for(labor_task_type),
+        "requested_parts": required_parts,
     }

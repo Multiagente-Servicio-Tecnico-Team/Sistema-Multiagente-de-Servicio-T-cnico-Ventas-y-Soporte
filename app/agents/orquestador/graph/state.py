@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Literal
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AnyMessage
@@ -10,6 +11,7 @@ class AgentState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     user_id: object
     ticket_id: int
+    ticket_code: str
     category: str
     product: str
     symptoms: str
@@ -19,6 +21,7 @@ class AgentState(TypedDict, total=False):
     ticket_confirmed: bool
     diagnosis: str
     labor_cost: Decimal
+    labor_task_type: Literal["maintenance", "diagnosis"]
     requested_parts: list[dict[str, object]]
     inventory: list[dict[str, object]]
     available_parts: list[dict[str, object]]
@@ -49,5 +52,10 @@ class PartRequest(BaseModel):
 
 class TechnicalDiagnosis(BaseModel):
     diagnosis: str = Field(description="Diagnóstico técnico provisional y sus límites")
-    labor_cost: Decimal = Field(ge=0, description="Costo estimado de mano de obra")
+    labor_task_type: Literal["maintenance", "diagnosis"] = Field(
+        description=(
+            "diagnosis si la causa exacta no está identificada o requiere "
+            "inspección; maintenance solo si el trabajo está determinado"
+        )
+    )
     parts: list[PartRequest] = Field(default_factory=list)

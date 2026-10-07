@@ -11,6 +11,16 @@ function now() {
 
 /** Importe del servidor ("180.00") mostrado sin cálculos en el navegador. */
 const money = (amount) => formatPEN(parseMoney(amount));
+const PATTERNS = [
+  { id: "hierarchical", name: "Jerárquico" },
+  { id: "orchestrator", name: "Orquestador" },
+  { id: "decentralized", name: "Descentralizado" },
+];
+const PATTERN_DESCRIPTIONS = {
+  hierarchical: "Jerarquía de atención y ventas; guarda tickets y presupuestos en PostgreSQL.",
+  orchestrator: "Supervisor de agentes; guarda tickets y presupuestos en PostgreSQL.",
+  decentralized: "Modo experimental: usa herramientas simuladas y no guarda tickets ni presupuestos.",
+};
 
 function QuoteCard({ quote, busy, onAction }) {
   const pending = quote.status === "proposed";
@@ -19,7 +29,7 @@ function QuoteCard({ quote, busy, onAction }) {
       <div className="quote__head">
         <span className="icon-tile icon-tile--solid icon-tile--sm"><ReceiptText size={18} aria-hidden="true" /></span>
         <div>
-          <strong>Presupuesto propuesto</strong>
+          <strong>Presupuesto de servicio técnico</strong>
           <p className="mono-small">Calculado por el agente de ventas</p>
         </div>
       </div>
@@ -37,15 +47,15 @@ function QuoteCard({ quote, busy, onAction }) {
         {pending ? (
           <div className="btn-row btn-row--start">
             <button type="button" className="btn btn--primary" disabled={busy} onClick={() => onAction("accept_quote")}>
-              <CircleCheck size={18} aria-hidden="true" /> Aceptar presupuesto
+            <CircleCheck size={18} aria-hidden="true" /> Confirmar y guardar
             </button>
             <button type="button" className="btn btn--ghost" disabled={busy} onClick={() => onAction("reject_quote")}>
-              <CircleX size={18} aria-hidden="true" /> Rechazar
+            <CircleX size={18} aria-hidden="true" /> No guardar
             </button>
           </div>
         ) : (
           <p className={`ok-text${quote.status === "rejected" ? " muted" : ""}`}>
-            {{ confirmed: "Presupuesto aceptado · reparación autorizada", rejected: "Presupuesto rechazado" }[quote.status]
+            {{ saved: "Ticket y presupuesto guardados · pendiente de aceptación", confirmed: "Presupuesto aceptado · reparación autorizada", rejected: "Propuesta no guardada" }[quote.status]
               || "Reemplazado por un presupuesto más reciente"}
           </p>
         )}
@@ -64,6 +74,7 @@ export default function LiveChat({ api = defaultChatApi }) {
     text: `Hola${firstName ? `, ${firstName}` : ""}. Cuéntame qué equipo tienes y qué falla presenta.`,
   }]);
   const [conversationId, setConversationId] = useState(null);
+  const [pattern, setPattern] = useState("hierarchical");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -77,7 +88,7 @@ export default function LiveChat({ api = defaultChatApi }) {
     setBusy(true);
     setError(null);
     try {
-      const data = await api.sendMessage({ conversationId, ...payload });
+      const data = await api.sendMessage({ conversationId, pattern, ...payload });
       setConversationId(data.conversation_id);
       setMessages((m) => [...m, { id: Date.now() + 1, from: "bot", time: now(), text: data.reply, quote: data.quote, ticket: data.ticket }]);
     } catch (err) {
@@ -104,6 +115,18 @@ export default function LiveChat({ api = defaultChatApi }) {
     call({ message: text });
   };
 
+  const startNewConversation = () => {
+    if (busy) return;
+    setConversationId(null);
+    setMessages([{
+      id: Date.now(),
+      from: "bot",
+      time: now(),
+      text: `Hola${firstName ? `, ${firstName}` : ""}. Cuéntame qué equipo tienes y qué falla presenta.`,
+    }]);
+    setError(null);
+  };
+
   // Solo la última tarjeta de presupuesto reacciona a los botones.
   const lastQuoteId = [...messages].reverse().find((m) => m.quote)?.id;
 
@@ -119,9 +142,34 @@ export default function LiveChat({ api = defaultChatApi }) {
           <span className="copilot__avatar"><Bot size={22} aria-hidden="true" /></span>
           <div>
             <h2>TechFix Copilot</h2>
-            <p>Agentes de atención, soporte técnico y ventas · Sesión de {session?.email}</p>
+            <p>Agentes de atención, soporte técnico y ventas</p>
           </div>
         </header>
+
+        <div className="pattern-picker">
+          <label htmlFor="chat-pattern">Patrón de agentes</label>
+          <select
+            id="chat-pattern"
+            value={pattern}
+            disabled={busy || Boolean(conversationId)}
+            onChange={(event) => setPattern(event.target.value)}
+          >
+            {PATTERNS.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+          {conversationId && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={busy}
+              onClick={startNewConversation}
+            >
+              <RotateCcw size={14} aria-hidden="true" /> Nueva conversación
+            </button>
+          )}
+          <span className="mono-small" role="status">{PATTERN_DESCRIPTIONS[pattern]}</span>
+        </div>
 
         <div className="copilot__log" aria-live="polite">
           {messages.map((m) =>

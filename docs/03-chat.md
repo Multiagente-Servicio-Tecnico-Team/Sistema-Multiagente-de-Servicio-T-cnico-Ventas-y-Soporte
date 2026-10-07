@@ -1,5 +1,10 @@
 # 03 — Chat del portal
 
+> Este documento registra el alcance del prototipo original. La integración
+> vigente de los tres patrones LangGraph, el contrato autenticado y las
+> limitaciones por patrón están en
+> [06-integracion-patrones.md](./06-integracion-patrones.md).
+
 FastAPI sirve el portal y su API. `support_graph` enruta cada mensaje a orientación o ventas. Las respuestas son reglas deterministas en español, sin proveedor LLM ni costo externo. La orientación consulta el historial, pero no extrae automáticamente un diagnóstico o una orden de trabajo.
 
 Endpoints:
@@ -17,4 +22,4 @@ Sesiones e historial en memoria (100 mensajes por usuario). Reiniciar borra ambo
 
 Pruebas: `python -m pytest tests/test_portal.py -q`.
 
-Prueba de navegador: iniciar `tests/serve_portal.py` con `PYTHONPATH` apuntando a la raíz; ejecutar `node tests/browser.cjs` con Playwright instalado. `BROWSER_CHANNEL=msedge` permite usar Edge local y `PLAYWRIGHT_MODULE` permite indicar la ruta del módulo. El servidor de pruebas usa una cuenta sintética y escucha solo en 127.0.0.1:8765; no usarlo en producción.
+La instrucción de navegador de este prototipo ya no corresponde a la UI vigente. Para la integración actual, ejecutar las pruebas del portal React (`npm --prefix landing test`) y levantar el frontend y las APIs descritas en el README.

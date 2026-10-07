@@ -1,12 +1,12 @@
 # Sistema Multiagente de Servicio Técnico, Ventas y Soporte
 
 TechFix.AI: plataforma para un taller de reparación de equipos. El cliente se registra, inicia sesión y conversa
-con agentes LangGraph que diagnostican la falla, consultan repuestos y preparan un presupuesto; el taller atiende
-los tickets que se generan.
+con agentes LangGraph que orientan sobre fallas y preparan propuestas; los patrones Jerárquico y Orquestador
+consultan repuestos y pueden guardar tickets/presupuestos.
 
 El proyecto compara tres patrones multiagente con LangGraph, con herramientas y trazabilidad en LangSmith:
-**Orquestador/Supervisor**, **Jerárquico** y **Red Descentralizada**. Todos comparten el frontend, las cuentas de
-usuario y la base de datos.
+**Orquestador/Supervisor**, **Jerárquico** y **Red Descentralizada**. Comparten frontend y autenticación; la
+persistencia de inventario y presupuestos está disponible en los dos primeros patrones.
 
 ## Módulos
 
@@ -14,89 +14,36 @@ usuario y la base de datos.
 | --- | --- | --- |
 | Landing, portal del cliente y panel del taller (React) | [`landing/`](landing/README.md) | En `main` |
 | Cuentas: registro, inicio de sesión, recuperación de contraseña | [`app/accounts/`](app/accounts/README.md) | En `main` |
-| Sesión reutilizable y contrato común del chat (`POST /api/chat`) | [`app/chat/`](app/chat/README.md) | En `main` |
+| Sesión reutilizable y contrato común del chat (`POST /api/chat`) | [`app/chat/`](app/chat/README.md), [`app/main.py`](app/main.py) | Integrados |
 | Agente de ventas, soporte y trazas locales | `app/agents/sales.py`, `app/agents/support.py`, `app/tracing.py` | En `main` |
-| Patrón de Red Descentralizada (soporte, técnico, ventas con *handoffs*) | `app/agents/decentralized/` | En `main` |
-| Patrón Jerárquico | `app/agents/jerarquico/` en la rama `lg-patron-jerarquico` | En su rama |
-| Patrón Orquestador/Supervisor | `app/agents/orquestador/` en la rama `alonso_orquestador` | En su rama |
+| Patrón de Red Descentralizada | [`app/agents/decentralized/`](app/agents/decentralized/) | Integrado; herramientas aún simuladas |
+| Patrón Jerárquico | [`app/agents/jerarquico/`](app/agents/jerarquico/) | Integrado; consulta y persistencia PostgreSQL |
+| Patrón Orquestador/Supervisor | [`app/agents/orquestador/`](app/agents/orquestador/) | Integrado; consulta y persistencia PostgreSQL |
 | Correo transaccional (SMTP) | `app/email/` | En `main` |
 
-## Equipo y avance
+## Integración de patrones
 
-Estado al 2026-10-05.
+El chat React permite seleccionar Jerárquico, Orquestador o Descentralizado antes
+del primer mensaje. Cada conversación conserva el patrón elegido; para cambiarlo
+hay que iniciar otra. El backend aplica `SessionGuard` a `GET /api/chat/patterns` y
+`POST /api/chat`, identifica al cliente mediante la cookie autenticada y pasa el
+UUID de conversación como `thread_id` de LangGraph.
 
-| Tarea | Responsable | Rama | Avance |
-| --- | --- | --- | --- |
-| Landing, registro de cuenta e inicio de sesión | SebasBazauri | `frontend` y `backend`, integradas en `main` | ✅ Completa |
-| Patrón de Red Descentralizada | Jose Saldaña | `patron-red-descentralizada`, integrada en `main` | 🟡 Agentes y herramientas listos; falta integración |
-| Patrón Jerárquico | jsalinas4 | `lg-patron-jerarquico` | 🟡 Avanzado; pendiente de integrar a `main` |
-| Patrón Orquestador/Supervisor | johstevnn | `alonso_orquestador` | 🟡 Avanzado; pendiente de integrar a `main` |
+Los patrones Jerárquico y Orquestador usan sus motores de negocio existentes para
+preparar y guardar tickets/presupuestos. La Red Descentralizada queda marcada en
+la interfaz como experimental: sus herramientas todavía son simuladas y no consulta
+inventario ni persiste tickets/presupuestos. No se declara paridad funcional entre
+los tres motores.
 
-### Landing, registro de cuenta e inicio de sesión — SebasBazauri
+LangSmith recibe la etiqueta del patrón y el UUID de conversación; el
+código configura el cliente con entradas y salidas ocultas y redacta el texto de
+errores. No se incluyen correo ni texto del usuario en los metadatos explícitos.
+La integración con servicios reales de Groq, PostgreSQL y LangSmith requiere
+configurar el entorno local.
 
-- Landing, portal del cliente y panel del taller en React según los diseños de Figma, adaptados a móvil.
-- API de cuentas: `/registro`, `/login`, `/logout` y `/me` con bcrypt y PostgreSQL; colección de Postman.
-- Recuperación y restablecimiento de contraseña con enlace temporal de un solo uso.
-- Sesión reutilizable para los patrones (`SessionGuard`) y contrato común `POST /api/chat`; el asistente del portal
-  conversa con el patrón usando la sesión, sin pedir el correo.
-- Trabajo previo: agente de ventas con presupuesto `Decimal`, trazas locales y prototipo del portal.
-- Pruebas: 56 del frontend (Vitest) y 55 de cuentas, sesión y chat (pytest).
-
-### Patrón de Red Descentralizada — Jose Saldaña
-
-Hecho:
-
-- Agentes de soporte, técnico y ventas que se transfieren la conversación (*handoffs*) con límite de
-  transferencias y registro de cada una.
-- 7 herramientas `@tool`: estado del ticket, diagnóstico, cotización y transferencias entre agentes.
-- Modelo de Groq; trazas en LangSmith mediante las variables `LANGSMITH_*`.
-- 35 pruebas: unitarias, de herramientas y una de punta a punta con el modelo real.
-
-Pendiente:
-
-- Agente de almacén e inventario y uso de la base de datos (tickets y repuestos).
-- `POST /api/chat` con la sesión del inicio de sesión para conectarlo al portal.
-
-### Patrón Jerárquico — jsalinas4
-
-Hecho:
-
-- Supervisor que delega en los agentes de soporte técnico, ventas y almacén.
-- Base de conocimiento (RAG) con el manual de servicio.
-- Crea tickets y presupuestos en PostgreSQL (`tickets`, `quotes`) y calcula el presupuesto con repuestos y mano
-  de obra.
-- Modelo de Groq; trazas en LangSmith con entradas y salidas ocultas.
-- API `POST /api/chat` con página de chat propia; 60 pruebas.
-
-Pendiente:
-
-- Traer `main` a su rama y resolver los conflictos en `.env.example`, `.gitignore`, `README.md`, `app/main.py`,
-  `app/static/index.html` y `requirements.txt`.
-- Identificar al cliente con la sesión del inicio de sesión (hoy lo identifica por el correo escrito en el chat).
-- El cálculo del presupuesto es una función del agente; aún no está registrado como herramienta de LangGraph.
-
-### Patrón Orquestador/Supervisor — johstevnn
-
-Hecho:
-
-- Supervisor que orquesta los agentes de atención, técnico, ventas, almacén, cotización y confirmación.
-- Base de conocimiento (RAG) de fallas comunes.
-- Herramienta `@tool` de inventario; modelo de Groq; configuración de LangSmith.
-- Interfaz de consola y de Streamlit; 15 pruebas.
-
-Pendiente:
-
-- Traer `main` a su rama y resolver los conflictos en `.env.example`, `.gitignore`, `README.md`, `app/main.py` y
-  `requirements.txt`.
-- `POST /api/chat` con la sesión del inicio de sesión (hoy se escribe el correo en la interfaz de Streamlit).
-
-### Integración pendiente del equipo
-
-- Que los tres patrones expongan `POST /api/chat` con `SessionGuard` siguiendo [`app/chat/README.md`](app/chat/README.md),
-  para usarlos desde el portal.
-- Unificar el acceso a la base de datos: el jerárquico y el orquestador tienen cada uno su propio
-  `app/database/repository.py`.
-- Acordar una sola forma de calcular presupuestos (catálogo de prueba o repuestos de la base de datos más mano de obra).
+Ver [`spec/06-integracion-patrones.md`](spec/06-integracion-patrones.md) y
+[`docs/06-integracion-patrones.md`](docs/06-integracion-patrones.md) para alcance,
+decisiones, validación y limitaciones del bloque.
 
 ## Arquitectura
 
@@ -122,12 +69,14 @@ app/
 ├── accounts/        API de cuentas (FastAPI): /registro, /login, /logout, /me, /recuperar, /restablecer
 ├── chat/            Contrato de /api/chat, patrón de referencia y modelo de tickets
 ├── agents/
-│   ├── sales.py     Agente de ventas: presupuesto con el catálogo de prueba (Decimal)
-│   ├── support.py   Grafo de soporte del prototipo del portal
-│   └── decentralized/  Red descentralizada: agentes, herramientas y grafo
+│   ├── jerarquico/     Supervisor, soporte, ventas, almacén, RAG y persistencia
+│   ├── orquestador/    Supervisor, agentes, herramientas y recuperación
+│   ├── decentralized/ Red descentralizada con agentes/herramientas simuladas
+│   ├── sales.py        Agente previo de ventas de demostración (Decimal)
+│   └── support.py      Grafo previo de soporte de demostración
 ├── database/        Conexión SQLAlchemy a PostgreSQL
 ├── email/           Servicio SMTP y plantillas
-├── main.py          Prototipo del portal (usuarios en variable de entorno)
+├── main.py          API autenticada del chat y selector de patrones LangGraph
 └── tracing.py       Trazas locales JSONL sin contenido de los mensajes
 landing/             Frontend React 18 + Vite
 postman/             Colección de la API de cuentas
@@ -154,15 +103,18 @@ Copiar `.env.example` a `.env` y completar:
 | `MAIL_MODE` | `outbox` guarda los correos en `OUTBOX_DIR`; `smtp` usa las variables `SMTP_*` |
 | `GROQ_API_KEY` | Modelo de los agentes de los patrones |
 | `LANGSMITH_API_KEY`, `LANGSMITH_TRACING`, `LANGSMITH_PROJECT` | Trazabilidad en LangSmith |
+| `LANGSMITH_HIDE_INPUTS`, `LANGSMITH_HIDE_OUTPUTS` | Ocultamiento de contenido en las trazas |
 
 El frontend usa `landing/.env` (ver `landing/.env.example`): `VITE_API_URL` para la API de cuentas y
 `VITE_CHAT_URL` para el patrón del chat. Sin ellas funciona en modo demostración.
+Las dos APIs deben usar el mismo `AUTH_SECRET` (mínimo 32 caracteres); para
+desarrollo HTTP local, configurar `AUTH_SECURE_COOKIE=false`.
 
 ## Puesta en marcha
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python -m pip install -r requirements.txt -r requirements-auth.txt
+.venv/Scripts/python -m pip install -r requirements.txt
 ```
 
 ```bash
@@ -170,7 +122,7 @@ python -m venv .venv
 ```
 
 ```bash
-.venv/Scripts/python -m uvicorn app.chat.reference:create_reference_app --factory --host localhost --port 8001
+.venv/Scripts/python -m uvicorn app.main:app --host localhost --port 8001
 ```
 
 ```bash
@@ -182,8 +134,8 @@ npm --prefix landing run dev
 ```
 
 Abrir http://localhost:5173. Usar `localhost` (no `127.0.0.1`) en todas las URLs para que el navegador envíe la
-cookie de sesión a ambas APIs. El puerto 8001 sirve el patrón de referencia; cada patrón del equipo lo reemplaza
-con su propia API.
+cookie de sesión a ambas APIs. Configurar `VITE_API_URL=http://localhost:8000` y
+`VITE_CHAT_URL=http://localhost:8001` en `landing/.env`.
 
 ## Pruebas
 
@@ -192,12 +144,12 @@ npm --prefix landing test
 ```
 
 ```bash
-.venv/Scripts/python -m pytest tests --ignore=tests/test_database.py --ignore=tests/test_email.py
+.venv/Scripts/python -m pytest tests --ignore=tests/test_database.py --ignore=tests/test_email.py --ignore=tests/test_e2e_decentralized.py -q
 ```
 
-- `tests/test_database.py` y `tests/test_email.py` son scripts manuales que conectan a PostgreSQL y SMTP reales.
-- Las pruebas de la red descentralizada necesitan `GROQ_API_KEY` definida; `tests/test_e2e_decentralized.py`
-  llama al modelo real.
+- `tests/test_database.py` y `tests/test_email.py` son scripts manuales que acceden a PostgreSQL y SMTP reales;
+  no se deben incluir en la suite aislada.
+- `tests/test_e2e_decentralized.py` llama a Groq real; se excluye de la suite aislada para evitar llamadas externas.
 - API de cuentas con Postman o Newman: `npx newman run postman/techfix-auth.postman_collection.json`.
 
 ## Seguridad
@@ -215,7 +167,8 @@ npm --prefix landing test
 
 ## Limitaciones actuales
 
-- Los patrones Jerárquico y Orquestador aún no están en `main` ni usan la sesión del inicio de sesión.
-- La Red Descentralizada todavía no expone `POST /api/chat`.
+- Las conversaciones y el bloqueo entre patrones residen en memoria del proceso; ejecutar una sola instancia.
+- La Red Descentralizada usa herramientas simuladas y no guarda tickets ni presupuestos en PostgreSQL.
 - Tickets, inventario y "Mis Tickets" del frontend usan datos de demostración.
-- Conversaciones y límites de intentos viven en la memoria del proceso (una sola instancia).
+- `npm audit --omit=dev` reporta dos vulnerabilidades moderadas en React Router; el arreglo sugerido por npm
+  salta a la versión 7 y requiere evaluar cambios incompatibles antes de aplicarlo.

@@ -9,18 +9,22 @@ escrito en el chat.
 | `app/accounts/session.py` | `SessionGuard`: dependencias `require_customer` y `require_user` para FastAPI |
 | `app/chat/contract.py` | Modelos del contrato: `ChatIn`, `ChatOut`, `QuoteOut`, `TicketOut` |
 | `app/chat/models.py` | Mapeo de la tabla `tickets` del script de BD |
-| `app/chat/reference.py` | Patrón de referencia (grafo atención → soporte técnico → ventas) para probar sin Groq |
+| `app/main.py` | API integrada que selecciona e invoca los tres patrones LangGraph |
+| `app/chat/reference.py` | API de referencia independiente para probar el contrato |
 
 ## Contrato `POST /api/chat`
 
 Petición (cookie `techfix_session` obligatoria):
 
 ```json
-{ "conversation_id": null, "message": "Mi laptop HP no detecta el disco", "action": null }
+{ "conversation_id": null, "message": "Mi laptop HP no detecta el disco", "action": null, "pattern": "hierarchical" }
 ```
 
-`action` puede ser `"accept_quote"` o `"reject_quote"` (botones de la tarjeta de presupuesto). Campos como
-`email` o `customer_id` en el cuerpo se ignoran.
+`pattern` puede ser `hierarchical`, `orchestrator` o `decentralized`; si se omite,
+el backend usa `hierarchical`. El patrón no se puede cambiar en una conversación
+existente. `action` puede ser `"accept_quote"` o `"reject_quote"` (botones de la
+tarjeta de propuesta). Campos como `email` o `customer_id` en el cuerpo se ignoran.
+`GET /api/chat/patterns` lista los patrones y requiere la misma sesión.
 
 Respuesta `200`:
 
@@ -41,41 +45,37 @@ Respuesta `200`:
 | `409` | Acción sin presupuesto pendiente |
 | `422` | Cuerpo inválido (no se repite el mensaje) |
 | `429` | Más de 20 mensajes por minuto |
-| `503` | Base de datos o modelo no disponibles |
+| `502` | Error procesando con el proveedor LLM o el patrón |
+| `503` | Base de datos o almacenamiento no disponibles |
 
-## Cómo adoptarlo en un patrón (Orquestador, Jerárquico o Red descentralizada)
+## API integrada
 
-1. Instalar `requirements-auth.txt` y usar el mismo `AUTH_SECRET` y `DATABASE_URL` que la API de cuentas.
-2. Crear la guarda e instalar su manejador de errores:
+El punto de entrada del chat ya construye y selecciona los motores:
 
-   ```python
-   from app.accounts.session import SessionCustomer, SessionGuard
-   from app.chat.contract import ChatIn, ChatOut
+```bash
+.venv/Scripts/python -m uvicorn app.main:app --host localhost --port 8001
+```
 
-   guard = SessionGuard.from_env()
-   guard.install(app)
+El portal comparte el contrato, pero los motores no tienen la misma paridad de
+persistencia: Jerárquico y Orquestador conectan sus herramientas de negocio a
+PostgreSQL; Red Descentralizada sigue siendo un prototipo con herramientas
+simuladas, sin lectura de inventario ni persistencia de tickets/presupuestos.
+El selector se bloquea al iniciar una conversación; iniciar otra crea un nuevo
+`thread_id` y permite elegir otro patrón.
 
-   @app.post("/api/chat", response_model=ChatOut, response_model_exclude_none=True)
-   def chat(body: ChatIn, customer: SessionCustomer = Depends(guard.require_customer)):
-       ...  # usar customer.id en tickets.customer_id y customer.nombre en el saludo
-   ```
+LangSmith es controlado por `LANGSMITH_TRACING`, `LANGSMITH_API_KEY` y
+`LANGSMITH_PROJECT`; inputs y outputs se ocultan mediante
+`LANGSMITH_HIDE_INPUTS`/`LANGSMITH_HIDE_OUTPUTS`. Los metadatos explícitos
+contienen el patrón y UUID de conversación, no ID de cliente, correo ni mensaje.
 
-3. Quitar el campo de correo del cuerpo del chat. En el patrón jerárquico, reemplazar la búsqueda por correo
-   (`find_customer`) por el `customer` de la sesión.
-4. Responder con `ChatOut`: `reply` siempre; `quote` y `ticket` cuando el grafo los produzca. Importes como texto
-   con dos decimales calculados con `Decimal`.
-5. CORS con `allow_credentials=True` para los orígenes de `FRONTEND_ORIGINS`.
-6. En LangSmith, etiquetar con `customer_id` y `conversation_id`; no enviar correo, nombre ni contraseñas.
-
-## Patrón de referencia
+## API de referencia
 
 ```bash
 .venv/Scripts/python -m uvicorn app.chat.reference:create_reference_app --factory --host localhost --port 8001
 ```
 
-Usa el agente de ventas del repositorio (`app/agents/sales.py`) y su catálogo de prueba. Con un mensaje que
-describe el equipo y la falla, crea el ticket en `QUOTED` con el `customer_id` de la sesión; aceptar lo pasa a
-`IN_REPAIR` y rechazar a `CANCELLED`. Las conversaciones viven en memoria del proceso.
+La API de referencia es independiente y no es el punto de entrada usado por el
+selector de patrones.
 
 En el frontend, definir `VITE_CHAT_URL=http://localhost:8001` en `landing/.env` (además de `VITE_API_URL`).
 Frontend, API de cuentas y chat deben usar el host `localhost` para que el navegador envíe la cookie.

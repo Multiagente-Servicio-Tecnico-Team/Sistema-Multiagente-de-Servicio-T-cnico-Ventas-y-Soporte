@@ -54,7 +54,7 @@ def ventas_node(state: AgentState) -> dict[str, object]:
 
 
 def persistencia_node(state: AgentState) -> dict[str, object]:
-    ticket_id, quote_id, saved_total = create_ticket_with_quote(
+    ticket_id, quote_id, saved_total, ticket_code = create_ticket_with_quote(
         state["user_id"],
         state["product"],
         state["category"],
@@ -71,6 +71,7 @@ def persistencia_node(state: AgentState) -> dict[str, object]:
     )
     return {
         "ticket_id": ticket_id,
+        "ticket_code": ticket_code,
         "quote_id": quote_id,
         "response": response,
         "messages": [AIMessage(content=response)],

@@ -299,7 +299,7 @@ def create_ticket_with_quote(
     labor_cost: Decimal,
     available_parts: list[dict[str, object]],
     engine: Engine | None = None,
-) -> tuple[int, int, Decimal]:
+) -> tuple[int, int, Decimal, str]:
     engine = engine or get_engine()
     labor_cost = Decimal(str(labor_cost)).quantize(Decimal("0.01"))
     parts_total = sum(
@@ -311,13 +311,14 @@ def create_ticket_with_quote(
     ).quantize(Decimal("0.01"))
     total = labor_cost + parts_total
 
+    ticket_code = f"TCK-{uuid4().hex[:12].upper()}"
     with engine.begin() as connection:
         tickets = _table(connection, "tickets")
         ticket_id = _insert_row(
             connection,
             tickets,
             {
-                "code": f"TCK-{uuid4().hex[:12].upper()}",
+                "code": ticket_code,
                 "customer_id": user_id,
                 "title": f"{product} - {category}"[:200],
                 "failure_description": symptoms,
@@ -361,7 +362,7 @@ def create_ticket_with_quote(
             .values({ticket_status: "QUOTED"})
         )
 
-    return ticket_id, quote_id, total
+    return ticket_id, quote_id, total, ticket_code
 from collections.abc import Callable
 from decimal import Decimal
 import re

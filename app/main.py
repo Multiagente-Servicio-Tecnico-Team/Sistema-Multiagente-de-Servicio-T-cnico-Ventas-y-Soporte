@@ -1,163 +1,53 @@
-from langchain_core.messages import HumanMessage
+"""Authenticated chat API for selecting and tracing the LangGraph patterns."""
 
-from app.agents.orquestador import build_graph, new_thread_id
-from app.database.repository import find_user_by_email
-
-
-def main() -> None:
-    email = input("Email del usuario registrado: ").strip()
-    if not email:
-        print("El email es obligatorio.")
-        return
-
-    user = find_user_by_email(email)
-    if user is None:
-        print("No existe un usuario con ese email. Regístralo en la base de datos primero.")
-        return
-
-    graph = build_graph()
-    thread_id = new_thread_id()
-    config = {"configurable": {"thread_id": thread_id}}
-    print(
-        f"Sesión de autenticación simulada para {user.get('nombre', user.get('name', email))}. "
-        "Escribe 'salir' para terminar."
-    )
-
-    while True:
-        prompt = input("Tú: ").strip()
-        if prompt.casefold() in {"salir", "exit", "quit"}:
-            break
-        if not prompt:
-            continue
-
-        result = graph.invoke(
-            {
-                "messages": [HumanMessage(content=prompt)],
-                "user_id": user["id"],
-            },
-            config=config,
-        )
-        print(f"\nAtención: {result['response']}\n")
-            if result.get("quote_id") or not (
-                result.get("awaiting_clarification")
-                or result.get("awaiting_ticket_confirmation")
-            ):
-            break
-
-
-if __name__ == "__main__":
-    main()
-import hashlib
-import hmac
 import logging
-import re
-import secrets
 from contextlib import AbstractContextManager, nullcontext
-from functools import lru_cache
-from pathlib import Path
-from threading import Lock
-from typing import Any
-from uuid import UUID
+from threading import Lock, RLock
+from typing import Any, Callable
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from groq import APIError as GroqAPIError
 from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import AIMessage, HumanMessage
 from langsmith import Client, tracing_context
-from pydantic import BaseModel, Field, field_validator
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.agents.jerarquico.graph.builder import build_multiagent_graph
-from app.settings import load_settings
+from app.accounts.api import _validation_response
+from app.accounts.config import Settings as AccountSettings
+from app.accounts.security import LoginLimiter
+from app.accounts.session import (
+    SessionCustomer,
+    SessionError,
+    SessionGuard,
+)
+from app.chat.contract import ChatIn, ChatOut, QuoteLine, QuoteOut, TicketOut
+from app.settings import Settings, load_settings
 
 
 logger = logging.getLogger(__name__)
-STATIC_INDEX = Path(__file__).parent / "static" / "index.html"
-EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PATTERN_NAMES = {
+    "hierarchical": "Jerárquico",
+    "orchestrator": "Orquestador / supervisor",
+    "decentralized": "Red descentralizada",
+}
+GraphFactory = Callable[[], Any]
 
 
-class ChatRequest(BaseModel):
-    session_id: UUID
-    email: str = Field(min_length=3, max_length=254)
-    message: str = Field(min_length=1, max_length=4000)
-
-    @field_validator("email")
-    @classmethod
-    def validate_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if not EMAIL_PATTERN.fullmatch(normalized):
-            raise ValueError("Ingresa un email válido.")
-        return normalized
-
-    @field_validator("message")
-    @classmethod
-    def validate_message(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("El mensaje no puede estar vacío.")
-        return normalized
-
-
-class QuoteResponse(BaseModel):
-    labor_cost: str
-    parts_cost: str
-    total_amount: str
-
-
-class ChatResponse(BaseModel):
-    session_id: UUID
-    answer: str
-    outcome: str
-    ticket_id: int | None = None
-    ticket_code: str | None = None
-    quote_id: int | None = None
-    quote: QuoteResponse | None = None
-
-
-class SessionIdentityConflict(Exception):
-    pass
-
-
-class ChatSessionRegistry:
-    def __init__(self) -> None:
-        self._secret = secrets.token_bytes(32)
-        self._guard = Lock()
-        self._identity_fingerprints: dict[str, bytes] = {}
-        self._session_locks: dict[str, Lock] = {}
-
-    def acquire(self, session_id: UUID, email: str) -> Lock:
-        session_key = str(session_id)
-        fingerprint = hmac.new(
-            self._secret,
-            email.encode("utf-8"),
-            hashlib.sha256,
-        ).digest()
-        with self._guard:
-            previous = self._identity_fingerprints.get(session_key)
-            if previous and not hmac.compare_digest(previous, fingerprint):
-                raise SessionIdentityConflict
-            self._identity_fingerprints.setdefault(session_key, fingerprint)
-            return self._session_locks.setdefault(session_key, Lock())
-
-
-@lru_cache(maxsize=1)
-def get_graph() -> Any:
-    return build_multiagent_graph(settings=load_settings())
-
-
-def redact_trace_error(values: dict[str, Any]) -> dict[str, Any]:
-    if isinstance(values.get("error"), str):
-        return {
-            **values,
-            "error": "Provider error details redacted; inspect local application logs.",
-        }
-    return values
-
-
-def get_trace_context() -> AbstractContextManager[None]:
-    settings = load_settings()
+def get_trace_context(
+    settings: Settings | None = None,
+) -> AbstractContextManager[None]:
+    settings = settings or load_settings()
     if not settings.langsmith_tracing:
         return nullcontext()
+    if not settings.langsmith_api_key:
+        raise RuntimeError(
+            "LANGSMITH_API_KEY es necesaria cuando LANGSMITH_TRACING=true."
+        )
     client = Client(
         api_key=settings.langsmith_api_key,
         hide_inputs=settings.langsmith_hide_inputs,
@@ -171,233 +61,355 @@ def get_trace_context() -> AbstractContextManager[None]:
     )
 
 
-app = FastAPI(
-    title="Asistente multiagente de servicio técnico",
-    version="0.1.0",
-)
-session_registry = ChatSessionRegistry()
+def redact_trace_error(values: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(values.get("error"), str):
+        return {**values, "error": "Provider error details redacted."}
+    return values
 
 
-@app.get("/", include_in_schema=False)
-def chat_page() -> FileResponse:
-    return FileResponse(STATIC_INDEX)
+def _build_hierarchical_graph() -> Any:
+    from app.agents.jerarquico.graph.builder import build_multiagent_graph
+
+    settings = load_settings()
+    settings.require_chat_configuration()
+    return build_multiagent_graph(settings=settings)
 
 
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon() -> Response:
-    return Response(status_code=204)
+def _build_orchestrator_graph() -> Any:
+    from app.agents.orquestador import build_graph
+
+    return build_graph()
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
-    try:
-        session_lock = session_registry.acquire(request.session_id, request.email)
-    except SessionIdentityConflict as exc:
-        raise HTTPException(
-            status_code=409,
-            detail="Esta sesión ya está asociada a otro email. Inicia una sesión nueva.",
-        ) from exc
+def _build_decentralized_graph() -> Any:
+    from langgraph.checkpoint.memory import MemorySaver
 
-    with session_lock:
-        try:
-            with get_trace_context():
-                result: dict[str, Any] = get_graph().invoke(
-                    {
-                        "messages": [{"role": "user", "content": request.message}],
-                        "customer_email": request.email,
-                    },
-                    config={
-                        "configurable": {"thread_id": str(request.session_id)},
-                        "metadata": {"session_id": str(request.session_id)},
-                        "tags": ["hierarchical-multiagent", "service-chat"],
+    from app.agents.decentralized.graph import build_graph
+
+    return build_graph(checkpointer=MemorySaver())
+
+
+def _message_for_action(action: str | None, message: str | None) -> str:
+    if action == "accept_quote":
+        return "Sí, confirmo"
+    if action == "reject_quote":
+        return "No, rechazo el presupuesto"
+    return message or ""
+
+
+def _as_decimal_text(value: Any) -> str:
+    return f"{value:.2f}" if hasattr(value, "__format__") else str(value)
+
+
+def _quote_for_result(pattern: str, result: dict[str, Any]) -> QuoteOut | None:
+    status: str | None = None
+    lines: list[QuoteLine] = []
+    total: Any = None
+
+    if pattern == "hierarchical":
+        quote = result.get("quote")
+        if result.get("outcome") == "awaiting_confirmation":
+            status = "proposed"
+        elif result.get("outcome") == "quoted":
+            status = "saved"
+        elif result.get("outcome") == "declined":
+            status = "rejected"
+        if quote and status:
+            task_type = quote.get("labor_task_type", "maintenance")
+            labor_name = (
+                "Diagnóstico técnico"
+                if task_type == "diagnosis"
+                else "Mano de obra"
+            )
+            lines.append(
+                QuoteLine(
+                    label=labor_name,
+                    amount=_as_decimal_text(quote["labor_cost"]),
+                )
+            )
+            lines.extend(
+                QuoteLine(
+                    label=(
+                        f"{part['name']} × {part['quantity']}"
+                    ),
+                    amount=_as_decimal_text(part["subtotal"]),
+                )
+                for part in quote.get("parts", [])
+            )
+            total = quote["total_amount"]
+
+    elif pattern == "orchestrator":
+        if result.get("awaiting_ticket_confirmation"):
+            status = "proposed"
+        elif result.get("ticket_cancelled"):
+            status = "rejected"
+        elif result.get("quote_id") is not None:
+            status = "saved"
+        if status:
+            task_type = result.get("labor_task_type", "maintenance")
+            labor_name = (
+                "Diagnóstico técnico"
+                if task_type == "diagnosis"
+                else "Mano de obra"
+            )
+            lines.append(
+                QuoteLine(
+                    label=labor_name,
+                    amount=_as_decimal_text(result.get("labor_cost", 0)),
+                )
+            )
+            lines.extend(
+                QuoteLine(
+                    label=f"{part['name']} × {part['quantity']}",
+                    amount=_as_decimal_text(
+                        part["unit_price"] * int(part["quantity"])
+                    ),
+                )
+                for part in result.get("available_parts", [])
+            )
+            total = result.get("total")
+
+    if status is None or total is None:
+        return None
+    return QuoteOut(
+        status=status,
+        lines=lines,
+        total=_as_decimal_text(total),
+    )
+
+
+def _reply_for_result(pattern: str, result: dict[str, Any]) -> str:
+    if pattern == "orchestrator":
+        reply = result.get("response")
+        if isinstance(reply, str) and reply.strip():
+            return reply
+    messages = result.get("messages", [])
+    if messages and isinstance(messages[-1], AIMessage):
+        content = messages[-1].content
+        if isinstance(content, str) and content.strip():
+            return content
+    if messages and isinstance(messages[-1].content, str):
+        return messages[-1].content
+    raise ValueError("El patrón no produjo una respuesta de chat.")
+
+
+def _ticket_for_result(pattern: str, result: dict[str, Any]) -> TicketOut | None:
+    if pattern == "hierarchical" and result.get("outcome") == "quoted":
+        code = result.get("ticket_code")
+    elif pattern == "orchestrator" and result.get("quote_id") is not None:
+        code = result.get("ticket_code")
+    else:
+        return None
+    if not isinstance(code, str) or not code:
+        return None
+    return TicketOut(code=code, status="QUOTED")
+
+
+def create_app(
+    *,
+    session_guard: SessionGuard | None = None,
+    graph_factories: dict[str, GraphFactory] | None = None,
+    settings_factory: Callable[[], Settings] = load_settings,
+    trace_context_factory: Callable[[], AbstractContextManager[None]] | None = None,
+) -> FastAPI:
+    app = FastAPI(title="TechFix.AI · Patrones LangGraph", version="1.1.0")
+    account_settings = (
+        session_guard.settings
+        if session_guard is not None
+        else AccountSettings.from_env()
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(account_settings.frontend_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "Accept"],
+    )
+    app.add_exception_handler(SessionError, lambda _request, exc: JSONResponse(
+        status_code=exc.status,
+        content={"detail": exc.detail, "code": exc.code},
+    ))
+    app.add_exception_handler(
+        RequestValidationError,
+        lambda _request, exc: _validation_response(exc),
+    )
+
+    graph_builders = graph_factories or {
+        "hierarchical": _build_hierarchical_graph,
+        "orchestrator": _build_orchestrator_graph,
+        "decentralized": _build_decentralized_graph,
+    }
+    if set(graph_builders) != set(PATTERN_NAMES):
+        raise ValueError("Debe configurarse exactamente cada patrón disponible.")
+
+    graph_cache: dict[str, Any] = {}
+    conversations: dict[str, dict[str, Any]] = {}
+    conversations_lock = RLock()
+    limiter = LoginLimiter(20, 60)
+
+    def get_guard() -> SessionGuard:
+        nonlocal session_guard
+        if session_guard is None:
+            session_guard = SessionGuard.from_env()
+        return session_guard
+
+    def require_customer(request: Request) -> SessionCustomer:
+        return get_guard().require_customer(request)
+
+    def get_graph(pattern: str) -> Any:
+        with conversations_lock:
+            if pattern not in graph_cache:
+                graph_cache[pattern] = graph_builders[pattern]()
+            return graph_cache[pattern]
+
+    def invoke_pattern(
+        pattern: str,
+        conversation_id: str,
+        customer: SessionCustomer,
+        message: str,
+    ) -> dict[str, Any]:
+        from app.agents.orquestador.graph.state import AgentState as OrchestratorState
+        from app.agents.jerarquico.graph.state import ServiceState
+        from app.agents.decentralized.state import AgentState as DecentralizedState
+
+        human_message = HumanMessage(content=message)
+        if pattern == "hierarchical":
+            state: ServiceState = {
+                "messages": [human_message],
+                "customer_id": customer.id,
+            }
+        elif pattern == "orchestrator":
+            state = OrchestratorState(
+                messages=[human_message],
+                user_id=customer.id,
+            )
+        else:
+            state = DecentralizedState(messages=[human_message])
+
+        config = {
+            "configurable": {"thread_id": conversation_id},
+            "run_name": f"techfix-{pattern}",
+            "tags": ["service-chat", f"pattern:{pattern}"],
+            "metadata": {
+                "pattern": pattern,
+                "conversation_id": conversation_id,
+            },
+        }
+        with (trace_context_factory or (lambda: get_trace_context(settings_factory())))():
+            return get_graph(pattern).invoke(state, config=config)
+
+    @app.get("/api/chat/patterns")
+    def patterns(_customer: SessionCustomer = Depends(require_customer)):
+        return {
+            "patterns": [
+                {"id": pattern_id, "name": name}
+                for pattern_id, name in PATTERN_NAMES.items()
+            ]
+        }
+
+    @app.post("/api/chat", response_model=ChatOut, response_model_exclude_none=True)
+    def chat(
+        body: ChatIn,
+        customer: SessionCustomer = Depends(require_customer),
+    ) -> ChatOut:
+        customer_key = str(customer.id)
+        if limiter.blocked(customer_key):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Enviaste muchos mensajes seguidos. Espera un minuto."},
+            )
+        limiter.fail(customer_key)
+
+        is_new = body.conversation_id is None
+        conversation_id = body.conversation_id or str(uuid4())
+        with conversations_lock:
+            conversation = conversations.get(conversation_id)
+            if is_new:
+                conversation = {
+                    "customer_id": customer.id,
+                    "pattern": body.pattern,
+                    "pending_quote": False,
+                    "lock": Lock(),
+                }
+                conversations[conversation_id] = conversation
+            elif (
+                conversation is None
+                or conversation["customer_id"] != customer.id
+            ):
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": "Conversación no encontrada.", "code": "not_found"},
+                )
+            elif conversation["pattern"] != body.pattern:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "detail": "Para cambiar de patrón, inicia una conversación nueva.",
+                        "code": "pattern_locked",
                     },
                 )
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except SQLAlchemyError as exc:
-            logger.error("Multiagent database operation failed: %s", type(exc).__name__)
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo completar la operación en PostgreSQL.",
-            ) from exc
-        except GroqAPIError as exc:
-            logger.error("Groq request failed: %s", type(exc).__name__)
-            raise HTTPException(
-                status_code=502,
-                detail="El proveedor LLM no pudo procesar el mensaje.",
-            ) from exc
-        except (OutputParserException, ValueError, LookupError) as exc:
-            logger.error("Multiagent processing failed: %s", type(exc).__name__)
-            raise HTTPException(
-                status_code=502,
-                detail="El flujo multiagente no pudo completar el mensaje.",
-            ) from exc
 
-    messages = result.get("messages", [])
-    if not messages or not isinstance(messages[-1].content, str):
-        raise HTTPException(
-            status_code=502,
-            detail="El flujo multiagente no produjo una respuesta válida.",
-        )
+        assert conversation is not None
+        if body.action and (
+            body.pattern == "decentralized"
+            or not conversation["pending_quote"]
+        ):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "No hay un presupuesto pendiente en esta conversación.",
+                    "code": "no_quote",
+                },
+            )
+        message = _message_for_action(body.action, body.message)
 
-    outcome = result.get("outcome", "pending")
-    quote = (
-        result.get("quote")
-        if outcome in {"awaiting_confirmation", "quoted"}
-        else None
-    )
-    quote_response = (
-        QuoteResponse(
-            labor_cost=f"{quote['labor_cost']:.2f}",
-            parts_cost=f"{quote['parts_cost']:.2f}",
-            total_amount=f"{quote['total_amount']:.2f}",
-        )
-        if quote
-        else None
-    )
-    return ChatResponse(
-        session_id=request.session_id,
-        answer=messages[-1].content,
-        outcome=outcome,
-        ticket_id=(
-            result.get("ticket_id")
-            if outcome in {"quoted", "ticket_created"}
-            else None
-        ),
-        ticket_code=(
-            result.get("ticket_code") or None
-            if outcome in {"quoted", "ticket_created"}
-            else None
-        ),
-        quote_id=result.get("quote_id") if outcome == "quoted" else None,
-        quote=quote_response,
-    )
-import json
-import os
-import secrets
-from pathlib import Path
-from threading import RLock
-from time import monotonic
-
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-
-from app.agents.sales import QuoteRequest, build_sales_graph
-from app.agents.support import build_chat_graph
-from app.auth import hash_password, verify_password
-from app.tracing import invoke_traced
-
-
-class Login(BaseModel):
-    username: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=1, max_length=1024)
-
-
-class Message(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
-
-
-def create_app(users=None, trace_path=None, secure_cookie=None):
-    app = FastAPI(title="Portal de servicio técnico")
-    users = users if users is not None else json.loads(os.getenv("PORTAL_USERS_JSON", "{}"))
-    trace_path = Path(trace_path or os.getenv("TRACE_PATH", ".local/traces.jsonl"))
-    secure_cookie = secure_cookie if secure_cookie is not None else os.getenv("PORTAL_SECURE_COOKIE", "true").lower() != "false"
-    sessions, histories, attempts = {}, {}, {}
-    lock = RLock()
-    dummy_hash = hash_password(secrets.token_urlsafe(32))
-    graph, sales = build_chat_graph(), build_sales_graph()
-    static = Path(__file__).parent / "static"
-    app.mount("/static", StaticFiles(directory=static), name="static")
-
-    @app.middleware("http")
-    async def security_headers(request: Request, call_next):
-        response = await call_next(request)
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-        return response
-
-    def same_origin(request: Request):
-        if request.headers.get("X-Portal-Request") != "1":
-            raise HTTPException(403, "Solicitud inválida")
-
-    def current_user(request: Request):
-        token = request.cookies.get("portal_session", "")
-        with lock:
-            session = sessions.get(token)
-            if not session or session[1] <= monotonic():
-                sessions.pop(token, None)
-                raise HTTPException(401, "Inicia sesión para continuar")
-            return session[0]
-
-    @app.get("/")
-    def index():
-        return FileResponse(static / "index.html")
-
-    @app.post("/api/login", dependencies=[Depends(same_origin)])
-    def login(body: Login, request: Request, response: Response):
-        address = request.client.host if request.client else "local"
-        now = monotonic()
-        with lock:
-            for key in list(attempts):
-                if attempts[key][1] <= now:
-                    del attempts[key]
-            count, expires = attempts.get(address, (0, now + 300))
-            if count >= 10:
-                raise HTTPException(429, "Demasiados intentos; espera cinco minutos")
-            attempts[address] = (count + 1, expires)
-        valid = verify_password(body.password, users.get(body.username, dummy_hash))
-        if not valid or body.username not in users:
-            raise HTTPException(401, "Credenciales incorrectas")
-        token = secrets.token_urlsafe(32)
-        with lock:
-            for old in list(sessions):
-                if sessions[old][1] <= now or sessions[old][0] == body.username:
-                    del sessions[old]
-            sessions[token] = (body.username, now + 3600)
-            attempts.pop(address, None)
-        response.set_cookie("portal_session", token, httponly=True, secure=secure_cookie, samesite="strict", max_age=3600)
-        return {"username": body.username}
-
-    @app.post("/api/logout", dependencies=[Depends(same_origin)])
-    def logout(request: Request, response: Response):
-        with lock:
-            sessions.pop(request.cookies.get("portal_session", ""), None)
-        response.delete_cookie("portal_session")
-        return {"ok": True}
-
-    @app.get("/api/messages")
-    def messages(user=Depends(current_user)):
-        with lock:
-            return {"username": user, "messages": list(histories.get(user, []))}
-
-    @app.post("/api/chat", dependencies=[Depends(same_origin)])
-    def chat(body: Message, user=Depends(current_user)):
-        message = body.message.strip()
-        if not message:
-            raise HTTPException(422, "Escribe un mensaje")
-        with lock:
-            history = histories.setdefault(user, [])
+        with conversation["lock"]:
             try:
-                result, execution_id = invoke_traced(graph, {"message": message, "history": list(history)}, trace_path)
-            except Exception:
-                raise HTTPException(503, "No pudimos responder. Inténtalo nuevamente.") from None
-            answer = {"role": "assistant", "content": result["reply"], "execution_id": execution_id}
-            if result.get("quote"):
-                answer["quote"] = result["quote"]
-            history.extend([{"role": "user", "content": message}, answer])
-            del history[:-100]
-            return answer
+                result = invoke_pattern(
+                    body.pattern,
+                    conversation_id,
+                    customer,
+                    message,
+                )
+            except (SQLAlchemyError, OSError) as exc:
+                logger.error(
+                    "Pattern database or storage operation failed: %s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="El asistente no pudo completar la operación.",
+                ) from exc
+            except GroqAPIError as exc:
+                logger.error("Groq request failed: %s", type(exc).__name__)
+                raise HTTPException(
+                    status_code=502,
+                    detail="El proveedor LLM no pudo procesar el mensaje.",
+                ) from exc
+            except (OutputParserException, ValidationError, ValueError, LookupError, RuntimeError) as exc:
+                logger.error("Pattern processing failed: %s", type(exc).__name__)
+                raise HTTPException(
+                    status_code=502,
+                    detail="El patrón no pudo completar el mensaje.",
+                ) from exc
 
-    @app.post("/api/quotes", dependencies=[Depends(same_origin)])
-    def quote(body: QuoteRequest, user=Depends(current_user)):
-        try:
-            result, execution_id = invoke_traced(sales, {"request": body.model_dump()}, trace_path)
-        except Exception:
-            raise HTTPException(503, "No pudimos generar el presupuesto") from None
-        return {"quote": result["quote"], "execution_id": execution_id}
+            quote = _quote_for_result(body.pattern, result)
+            if body.pattern == "hierarchical":
+                conversation["pending_quote"] = (
+                    result.get("outcome") == "awaiting_confirmation"
+                )
+            elif body.pattern == "orchestrator":
+                conversation["pending_quote"] = bool(
+                    result.get("awaiting_ticket_confirmation")
+                )
+            answer = _reply_for_result(body.pattern, result)
+            return ChatOut(
+                conversation_id=conversation_id,
+                reply=answer,
+                quote=quote,
+                ticket=_ticket_for_result(body.pattern, result),
+                pattern=body.pattern,
+            )
 
     return app
 

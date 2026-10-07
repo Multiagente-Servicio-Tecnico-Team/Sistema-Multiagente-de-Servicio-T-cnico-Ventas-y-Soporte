@@ -1,81 +1,115 @@
+from contextlib import nullcontext
+from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
-from app.agents.sales import DEMO_REQUEST
-from app.auth import hash_password
-from app.main import create_app
+from langchain_core.messages import AIMessage
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.accounts.api import create_app as create_accounts_app
+from app.accounts.config import Settings as AccountSettings
+from app.accounts.models import Base
+from app.accounts.session import SessionGuard
+from app.main import PATTERN_NAMES, create_app
+from app.settings import Settings
+
+
+PASSWORD = "PatternPortal#2026"
+ACCOUNT_SETTINGS = AccountSettings(
+    database_url=None,
+    auth_secret="p" * 48,
+    secure_cookie=False,
+    bcrypt_rounds=4,
+)
+
+
+class EchoGraph:
+    def invoke(self, state, *, config):
+        return {"messages": [AIMessage(content="Respuesta de prueba")]}
 
 
 @pytest.fixture
-def portal(tmp_path):
-    users = {"ana": hash_password("prueba-ana-segura"), "luis": hash_password("prueba-luis-segura")}
-    return create_app(users, tmp_path / "traces.jsonl", secure_cookie=False)
+def portal():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    accounts = TestClient(create_accounts_app(ACCOUNT_SETTINGS, factory))
+    for name, email in (("Ana Torres", "ana@demo.pe"), ("Luis Pérez", "luis@demo.pe")):
+        accounts.post(
+            "/registro",
+            json={
+                "nombre": name,
+                "email": email,
+                "telefono": "+51987654321",
+                "password": PASSWORD,
+            },
+        )
+
+    graphs = {pattern: EchoGraph() for pattern in PATTERN_NAMES}
+    settings = Settings(
+        groq_api_key=None,
+        groq_model=None,
+        database_url=None,
+        langsmith_api_key=None,
+        langsmith_tracing=False,
+        langsmith_project="portal-tests",
+        langsmith_hide_inputs=True,
+        langsmith_hide_outputs=True,
+        labor_maintenance_price=Decimal("40.00"),
+        labor_diagnosis_price=Decimal("50.00"),
+    )
+    app = create_app(
+        session_guard=SessionGuard(ACCOUNT_SETTINGS, factory),
+        graph_factories={key: (lambda graph=graph: graph) for key, graph in graphs.items()},
+        settings_factory=lambda: settings,
+        trace_context_factory=nullcontext,
+    )
+    yield accounts, TestClient(app)
+    engine.dispose()
 
 
-def client_for(app, username="ana"):
-    client = TestClient(app, headers={"X-Portal-Request": "1"})
-    result = client.post("/api/login", json={"username": username, "password": f"prueba-{username}-segura"})
-    assert result.status_code == 200
-    assert "HttpOnly" in result.headers["set-cookie"]
+def log_in(accounts, client, email):
+    accounts.cookies.clear()
+    response = accounts.post("/login", json={"email": email, "password": PASSWORD})
+    assert response.status_code == 200
+    client.cookies.set("techfix_session", accounts.cookies.get("techfix_session"))
     return client
 
 
-def test_authentication_and_logout(portal):
-    guest = TestClient(portal)
-    assert guest.get("/api/messages").status_code == 401
-    assert guest.post("/api/chat", json={"message": "hola"}, headers={"X-Portal-Request": "1"}).status_code == 401
-    assert guest.post("/api/login", json={"username": "ana", "password": "wrong"}).status_code == 403
-    assert guest.post("/api/login", json={"username": "ana", "password": "wrong"}, headers={"X-Portal-Request": "1"}).status_code == 401
-    client = client_for(portal)
-    assert client.post("/api/logout").status_code == 200
-    assert client.get("/api/messages").status_code == 401
+def test_chat_and_pattern_catalog_require_a_customer_session(portal):
+    _, client = portal
+
+    assert client.get("/api/chat/patterns").status_code == 401
+    assert client.post("/api/chat", json={"message": "hola"}).status_code == 401
 
 
-def test_conversation_private_history_and_quotes(portal):
-    ana, luis = client_for(portal), client_for(portal, "luis")
-    reply = ana.post("/api/chat", json={"message": "Mi laptop no enciende"})
-    assert reply.status_code == 200
-    assert "cargador" in reply.json()["content"]
-    assert reply.json()["execution_id"]
-    assert len(ana.get("/api/messages").json()["messages"]) == 2
-    assert luis.get("/api/messages").json()["messages"] == []
-    assert "cargador" in ana.post("/api/chat", json={"message": "Es una Lenovo"}).json()["content"]
-    assert ana.post("/api/chat", json={"message": "Quiero un presupuesto de ejemplo"}).json()["quote"]["total"] == "260.00"
-    assert ana.post("/api/chat", json={"message": "Quiero cotizar"}).json()["quote"]["missing_data"]
-    assert ana.post("/api/quotes", json=DEMO_REQUEST).json()["quote"]["total"] == "260.00"
+def test_conversation_is_private_to_the_authenticated_customer(portal):
+    accounts, client = portal
+    log_in(accounts, client, "ana@demo.pe")
+    response = client.post("/api/chat", json={"message": "Consulta privada"})
+    assert response.status_code == 200
+
+    log_in(accounts, client, "luis@demo.pe")
+    other_customer = client.post(
+        "/api/chat",
+        json={
+            "conversation_id": response.json()["conversation_id"],
+            "message": "No debo ver esto",
+        },
+    )
+    assert other_customer.status_code == 404
 
 
-def test_validation_and_static_portal(portal):
-    client = client_for(portal)
-    for message in ["", "  ", "x" * 4001]:
-        assert client.post("/api/chat", json={"message": message}).status_code == 422
-    page = client.get("/")
-    assert page.status_code == 200
-    assert 'id="messages"' in page.text
-    assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
-    assert client.get("/static/chat.js").status_code == 200
+def test_invalid_chat_body_is_rejected_without_echoing_long_input(portal):
+    accounts, client = portal
+    log_in(accounts, client, "ana@demo.pe")
+    response = client.post("/api/chat", json={"message": "x" * 2001})
 
-
-def test_generic_failure_does_not_leak(portal, monkeypatch):
-    def fail(*args, **kwargs):
-        raise RuntimeError("SMTP_PASSWORD=super-secret")
-    monkeypatch.setattr("app.main.invoke_traced", fail)
-    client = client_for(portal)
-    response = client.post("/api/chat", json={"message": "hola"})
-    assert response.status_code == 503
-    assert "super-secret" not in response.text
-    assert client.get("/api/messages").json()["messages"] == []
-
-
-def test_expired_session(portal, monkeypatch):
-    client = client_for(portal)
-    from time import monotonic
-    future = monotonic() + 3601
-    monkeypatch.setattr("app.main.monotonic", lambda: future)
-    assert client.get("/api/messages").status_code == 401
-
-
-def test_login_rate_limit(portal):
-    client = TestClient(portal, headers={"X-Portal-Request": "1"})
-    for _ in range(10):
-        assert client.post("/api/login", json={"username": "ana", "password": "bad"}).status_code == 401
-    assert client.post("/api/login", json={"username": "ana", "password": "bad"}).status_code == 429
+    assert response.status_code == 422
+    assert "x" * 50 not in response.text

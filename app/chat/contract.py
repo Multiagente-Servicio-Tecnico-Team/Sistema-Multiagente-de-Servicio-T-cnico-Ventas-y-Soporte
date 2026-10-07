@@ -11,6 +11,7 @@ class ChatIn(BaseModel):
     conversation_id: str | None = Field(default=None, max_length=64)
     message: str | None = Field(default=None, max_length=2000)
     action: Literal["accept_quote", "reject_quote"] | None = None
+    pattern: Literal["hierarchical", "orchestrator", "decentralized"] = "hierarchical"
 
     @model_validator(mode="after")
     def mensaje_o_accion(self) -> "ChatIn":
@@ -27,7 +28,7 @@ class QuoteLine(BaseModel):
 
 
 class QuoteOut(BaseModel):
-    status: Literal["proposed", "confirmed", "rejected"]
+    status: Literal["proposed", "saved", "confirmed", "rejected"]
     lines: list[QuoteLine]
     total: str
     currency: str = "PEN"
@@ -41,5 +42,6 @@ class TicketOut(BaseModel):
 class ChatOut(BaseModel):
     conversation_id: str
     reply: str
+    pattern: Literal["hierarchical", "orchestrator", "decentralized"] = "hierarchical"
     quote: QuoteOut | None = None
     ticket: TicketOut | None = None

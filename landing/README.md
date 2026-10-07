@@ -81,6 +81,12 @@ una cuenta de cliente no puede entrar al panel. El campo "Nombre y Apellido" se 
 Mensajes al usuario: 409 se muestra en el campo correo; 401 como "Correo o contraseña incorrectos"; errores de
 red o 5xx con un mensaje genérico, nunca con el texto del servidor.
 
+El asistente usa `src/api/chat.js` y `VITE_CHAT_URL`. Al configurarlo, el portal
+envía `POST /api/chat` con la cookie de sesión y el patrón seleccionado
+(`hierarchical`, `orchestrator` o `decentralized`); el patrón no cambia hasta
+iniciar una conversación nueva. `GET /api/chat/patterns` también requiere sesión.
+Sin `VITE_CHAT_URL`, el asistente conserva el flujo de demostración anterior.
+
 ## Ejecución local
 
 Requisitos: Node.js 18 o superior (probado con Node 24) y npm.
@@ -94,6 +100,7 @@ Abrir http://localhost:5173. Para usar un backend local, crear `landing/.env` a 
 
 ```bash
 VITE_API_URL=http://localhost:8000
+VITE_CHAT_URL=http://localhost:8001
 ```
 
 ## Pruebas
@@ -102,9 +109,9 @@ VITE_API_URL=http://localhost:8000
 npm --prefix landing test
 ```
 
-56 pruebas en 6 archivos: contrato de los endpoints de cuentas, errores 401/409/410/5xx y de red, validación de
-registro, acceso, recuperación y restablecimiento, roles, cierre de sesión, sesión sin contraseñas,
-redirecciones y consulta nueva.
+57 pruebas en 6 archivos: contrato de cuentas y chat, errores HTTP/red, selector y
+bloqueo de patrón, propuestas y tickets, registro, acceso, recuperación,
+restablecimiento, roles, cierre de sesión y consulta nueva.
 
 ## Compilación y despliegue
 
@@ -114,7 +121,8 @@ npm --prefix landing run build
 
 Genera `landing/dist/` (HTML, CSS y JS estáticos). Para publicarlo:
 
-1. Definir `VITE_API_URL` con la URL pública del backend **antes** de compilar (Vite la incrusta en el build).
+1. Definir `VITE_API_URL` y `VITE_CHAT_URL` con las URLs públicas de cuentas y chat **antes** de compilar
+   (Vite las incrusta en el build).
 2. Servir `dist/` en cualquier hosting estático (Nginx, Netlify, Vercel, GitHub Pages, S3 + CloudFront…).
 3. Configurar la redirección de todas las rutas a `index.html` (aplicación de una sola página), por ejemplo en
    Nginx: `try_files $uri /index.html;`.

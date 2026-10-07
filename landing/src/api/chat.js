@@ -20,6 +20,7 @@ export const CHAT_MESSAGES = {
   customerOnly: "El chat es para clientes. Ingresa con una cuenta de cliente.",
   notFound: "Esta conversación ya no está disponible. Empieza una nueva.",
   noQuote: "Este presupuesto ya fue respondido.",
+  patternLocked: "Para cambiar de patrón, inicia una conversación nueva.",
   tooMany: "Enviaste muchos mensajes seguidos. Espera un minuto y vuelve a intentar.",
   invalid: "Revisa el mensaje: no puede estar vacío ni superar 2000 caracteres.",
   unavailable: "El asistente no está disponible en este momento. Inténtalo de nuevo.",
@@ -29,7 +30,10 @@ function toChatError(status, data) {
   if (status === 401) return new ChatError(CHAT_MESSAGES.session, { status, code: "session_required" });
   if (status === 403) return new ChatError(CHAT_MESSAGES.customerOnly, { status, code: "customer_only" });
   if (status === 404) return new ChatError(CHAT_MESSAGES.notFound, { status, code: "not_found" });
-  if (status === 409) return new ChatError(CHAT_MESSAGES.noQuote, { status, code: "no_quote" });
+  if (status === 409) {
+    const code = data?.code === "pattern_locked" ? "pattern_locked" : "no_quote";
+    return new ChatError(CHAT_MESSAGES[code === "pattern_locked" ? "patternLocked" : "noQuote"], { status, code });
+  }
   if (status === 422) return new ChatError(CHAT_MESSAGES.invalid, { status, code: "invalid" });
   if (status === 429) return new ChatError(CHAT_MESSAGES.tooMany, { status, code: "rate_limited" });
   return new ChatError(CHAT_MESSAGES.unavailable, { status, code: data?.code || "unavailable" });
@@ -41,14 +45,19 @@ export function createChatApi({ baseUrl = "", fetchImpl } = {}) {
 
   return {
     mode: base ? "api" : "mock",
-    async sendMessage({ conversationId = null, message = null, action = null }) {
+    async sendMessage({
+      conversationId = null,
+      message = null,
+      action = null,
+      pattern = "hierarchical",
+    }) {
       let res;
       try {
         res = await doFetch(`${base}/api/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           credentials: "include",
-          body: JSON.stringify({ conversation_id: conversationId, message, action }),
+          body: JSON.stringify({ conversation_id: conversationId, message, action, pattern }),
         });
       } catch {
         throw new ChatError(CHAT_MESSAGES.unavailable, { code: "network" });

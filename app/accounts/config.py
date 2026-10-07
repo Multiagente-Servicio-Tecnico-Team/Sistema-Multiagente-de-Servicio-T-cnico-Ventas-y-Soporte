@@ -4,6 +4,8 @@ import os
 import secrets
 from dataclasses import dataclass, field
 
+from sqlalchemy.engine import make_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,8 +43,15 @@ class Settings:
             raise RuntimeError("AUTH_SECRET debe tener al menos 32 caracteres.")
         origins = tuple(o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",") if o.strip())
         rounds = int(os.getenv("BCRYPT_ROUNDS", "12"))
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            parsed_url = make_url(database_url)
+            if parsed_url.drivername in {"postgres", "postgresql"}:
+                database_url = parsed_url.set(
+                    drivername="postgresql+pg8000"
+                ).render_as_string(hide_password=False)
         return cls(
-            database_url=os.getenv("DATABASE_URL"),
+            database_url=database_url,
             auth_secret=secret,
             secure_cookie=_bool(os.getenv("AUTH_SECURE_COOKIE"), True),
             frontend_origins=origins,

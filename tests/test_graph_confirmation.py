@@ -135,13 +135,14 @@ class TicketConfirmationGraphTests(unittest.TestCase):
         }
         with patch(
             "app.agents.orquestador.agentes.ventas.create_ticket_with_quote",
-            return_value=(91, 27, 100),
+            return_value=(91, 27, 100, "TCK-TEST-91"),
         ) as persist:
             result = persistencia_node(state)
 
         persist.assert_called_once()
         self.assertEqual(result["ticket_id"], 91)
         self.assertEqual(result["quote_id"], 27)
+        self.assertEqual(result["ticket_code"], "TCK-TEST-91")
         self.assertIn("S/ 100.00", result["response"])
 
 

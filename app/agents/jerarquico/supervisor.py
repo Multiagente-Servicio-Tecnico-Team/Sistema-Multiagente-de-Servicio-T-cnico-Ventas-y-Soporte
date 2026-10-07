@@ -60,7 +60,12 @@ def make_customer_care_supervisor(llm: Any, repository: ServiceRepository):
                 "messages": [AIMessage(content=question)],
             }
 
-        customer = repository.find_customer(state["customer_email"])
+        customer_id = state.get("customer_id")
+        customer = (
+            {"id": customer_id}
+            if customer_id is not None
+            else repository.find_customer(state["customer_email"])
+        )
         if not customer:
             return {
                 "route": "customer_not_found",
