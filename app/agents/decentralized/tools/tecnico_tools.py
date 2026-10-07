@@ -47,3 +47,34 @@ def transferir_a_ventas(motivo: str) -> str:
     requiere información sobre precios o una cotización.
     """
     return f"TRANSFERIR_VENTAS: {motivo}"
+
+@tool
+def transferir_a_almacen(
+    motivo: str,
+    nombre_repuesto: str,
+    cantidad: int = 1,
+) -> dict:
+    """
+    Solicita verificar un repuesto identificado
+    para una reparación.
+
+    nombre_repuesto: nombre exacto del repuesto.
+    cantidad: unidades requeridas.
+    """
+
+    if not nombre_repuesto.strip():
+        return {
+            "error": "El nombre del repuesto es obligatorio."
+        }
+
+    if type(cantidad) is not int or cantidad <= 0:
+        return {
+            "error": "La cantidad debe ser un entero positivo."
+        }
+
+    return {
+        "accion": "TRANSFERIR_ALMACEN",
+        "motivo": motivo,
+        "nombre_repuesto": nombre_repuesto.strip(),
+        "cantidad": cantidad,
+    }

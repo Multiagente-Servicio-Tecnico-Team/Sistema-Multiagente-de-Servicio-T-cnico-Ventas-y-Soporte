@@ -1,6 +1,9 @@
+
+import json
+from decimal import Decimal, InvalidOperation
+
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from app.rag.tools import consultar_base_conocimiento
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage,
@@ -8,6 +11,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from app.rag.tools import consultar_base_conocimiento
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.tools.ventas_tools import (
     generar_cotizacion,
@@ -28,7 +32,7 @@ llm = ChatGroq(
     model_kwargs={
         "parallel_tool_calls": False,
         "tool_choice": "auto",
-    }
+    },
 )
 
 
@@ -46,6 +50,85 @@ ventas_llm = llm.bind_tools(ventas_tools)
 
 
 # =========================================================
+# VALIDACIÓN DEL INVENTARIO
+# =========================================================
+
+def validar_inventario(state: AgentState):
+    """
+    Valida los resultados de inventario antes de
+    utilizarlos en una cotización.
+
+    Devuelve datos verificados y problemas detectados.
+    """
+
+    resultados = state.get("inventory_results", [])
+    errores = []
+
+    # Conservar la última ejecución por identificador.
+    consultas = {}
+
+    for resultado in resultados:
+        identificador = resultado.get("tool_call_id")
+
+        if not identificador:
+            errores.append("Consulta sin identificador.")
+            continue
+
+        consultas[identificador] = resultado
+
+    inventario = []
+
+    for resultado in consultas.values():
+        try:
+            nombre = resultado["name"]
+            cantidad = resultado["quantity"]
+            stock = resultado["stock"]
+            precio = Decimal(str(resultado["unit_price"]))
+            disponible = resultado["available"]
+
+            if not isinstance(nombre, str) or not nombre.strip():
+                raise ValueError("Nombre inválido")
+
+            if type(cantidad) is not int or cantidad <= 0:
+                raise ValueError("Cantidad inválida")
+
+            if type(stock) is not int or stock < 0:
+                raise ValueError("Stock inválido")
+
+            if not precio.is_finite() or precio < 0:
+                raise ValueError("Precio inválido")
+
+            if type(disponible) is not bool:
+                raise ValueError("Disponibilidad inválida")
+
+            if disponible != (stock >= cantidad):
+                raise ValueError("Disponibilidad inconsistente")
+
+            inventario.append({
+                "nombre": nombre,
+                "cantidad": cantidad,
+                "stock": stock,
+                "precio_unitario": str(precio),
+                "disponible": disponible,
+                "subtotal": (
+                    str(precio * cantidad)
+                     if disponible
+                     else None
+                 ),
+            })
+
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            InvalidOperation,
+        ):
+            errores.append("Resultado de inventario inválido.")
+
+    return inventario, errores
+
+
+# =========================================================
 # PROMPT DEL AGENTE
 # =========================================================
 
@@ -53,43 +136,94 @@ SYSTEM_PROMPT = """
 Eres el agente de Ventas de un sistema multiagente
 de servicio técnico, ventas y soporte.
 
-Tus responsabilidades son:
+RESPONSABILIDADES:
 - Atender consultas comerciales.
-- Generar cotizaciones preliminares.
-- Utilizar generar_cotizacion cuando el usuario
-  solicite precios.
-- No inventar precios ni información comercial.
-
-Puedes recibir solicitudes atendidas previamente
-por otros agentes.
+- Preparar cotizaciones preliminares.
+- Utilizar los resultados verificados de Almacén.
+- No inventar precios, existencias ni diagnósticos.
 
 REGLAS:
-- Si existe un diagnóstico técnico previo,
-  considera que ya fue realizado.
-- Si el usuario solicita una cotización después
-  del diagnóstico, utiliza generar_cotizacion.
-- No repitas diagnósticos ya realizados.
-- Para reparaciones utiliza "reparacion".
-- Para mantenimiento utiliza "mantenimiento".
-- Si generar_cotizacion ya devolvió un precio
-  para la solicitud actual, responde con ese
-  resultado y no vuelvas a ejecutar la herramienta.
+- Si existe un diagnóstico previo, no lo repitas.
+- Los precios de repuestos provienen exclusivamente
+  del inventario validado de PostgreSQL.
+- No inventes repuestos, cantidades ni precios.
+- Si faltan datos del inventario, no calcules
+  una cotización total de reparación.
+- Si hay un error de inventario, informa que
+  no es posible confirmar la cotización.
+- Si un repuesto no está disponible, informa
+  la falta de stock y no lo ofrezcas como disponible.
+- Los precios de servicios de generar_cotizacion
+  son estimaciones simuladas, no tarifas verificadas.
+- No presentes estimaciones como precios definitivos.
+- No sumes importes ni modifiques subtotales
+  por tu cuenta.
+- No repitas herramientas ya ejecutadas.
+- Si se necesita diagnóstico, transfiere a Técnico.
 
-Uso de la base de conocimiento RAG:
-- Consulta consultar_base_conocimiento únicamente cuando
-  necesites información documental sobre los servicios.
-- Realiza como máximo una consulta RAG por solicitud.
-- Si ya existe un resultado de consultar_base_conocimiento
-  en la conversación, utiliza esa información para responder.
-- No vuelvas a consultar RAG para obtener información
-  que ya fue recuperada.
-- Después de recibir información suficiente de RAG,
-  responde directamente al usuario.
-- Para precios y cotizaciones utiliza exclusivamente
-  generar_cotizacion.
-- Si necesitas diagnóstico técnico, transfiere a Técnico.
+RAG:
+- Consulta la base de conocimiento solo cuando
+  necesites información documental.
+- Realiza como máximo una consulta RAG
+  por solicitud.
+- No utilices RAG para inventar precios.
 
+La cotización es preliminar y requiere
+confirmación explícita del cliente.
 """
+
+
+# =========================================================
+# CONTEXTO DEL INVENTARIO
+# =========================================================
+
+def construir_contexto_inventario(state: AgentState):
+    """
+    Convierte los datos validados del inventario
+    en información contextual para Ventas.
+    """
+
+    inventario, errores = validar_inventario(state)
+
+    errores_estado = [
+        error for error in state.get("errors", [])
+        if "inventario" in error.lower()
+    ]
+
+    errores.extend(errores_estado)
+
+    if errores:
+        return HumanMessage(
+            content=(
+                "INVENTARIO: ERROR DE VALIDACIÓN O CONSULTA.\n"
+                "No confirmes precios ni disponibilidad.\n"
+                "No generes una cotización total.\n"
+                + "\n".join(errores)
+            )
+        )
+
+    if not inventario:
+        return HumanMessage(
+            content=(
+                "INVENTARIO: No existen resultados verificados.\n"
+                "No inventes precios de repuestos.\n"
+                "Si la solicitud requiere repuestos, "
+                "no generes una cotización total."
+            )
+        )
+
+    return HumanMessage(
+        content=(
+            "INVENTARIO VALIDADO DE ALMACÉN:\n"
+            + json.dumps(
+                inventario,
+                ensure_ascii=False,
+            )
+            + "\nEstos son los únicos datos de repuestos "
+              "que puedes utilizar. Los subtotales "
+              "ya están calculados."
+        )
+    )
 
 
 # =========================================================
@@ -98,30 +232,19 @@ Uso de la base de conocimiento RAG:
 
 def construir_contexto_ventas(state: AgentState):
     """
-    Construye el historial específico de Ventas.
-
-    Conserva:
-    - Mensajes del usuario.
-    - Diagnósticos previos del agente Técnico.
-    - Llamadas y resultados de herramientas de Ventas.
-
-    Omite:
-    - Transferencias internas de otros agentes.
-    - Mensajes internos que no necesita Ventas.
+    Conserva mensajes del usuario, diagnósticos
+    técnicos y herramientas de Ventas.
     """
 
     contexto = []
     messages = state["messages"]
 
-    # Herramientas que pertenecen a Ventas
     nombres_tools = {
         "generar_cotizacion",
         "transferir_a_tecnico",
         "consultar_base_conocimiento",
     }
 
-    # Identificamos las llamadas de herramientas
-    # realizadas por Ventas.
     llamadas_ventas = set()
 
     for mensaje in messages:
@@ -130,20 +253,14 @@ def construir_contexto_ventas(state: AgentState):
                 if llamada["name"] in nombres_tools:
                     llamadas_ventas.add(llamada["id"])
 
-    # Construimos el contexto respetando el orden
-    # original de los mensajes.
     for mensaje in messages:
 
         if isinstance(mensaje, HumanMessage):
             contexto.append(mensaje)
 
         elif isinstance(mensaje, AIMessage):
-
             llamadas = mensaje.tool_calls
 
-            # Conservamos únicamente mensajes cuyas
-            # llamadas corresponden a herramientas
-            # propias de Ventas.
             if llamadas and all(
                 llamada["id"] in llamadas_ventas
                 for llamada in llamadas
@@ -152,13 +269,9 @@ def construir_contexto_ventas(state: AgentState):
 
         elif isinstance(mensaje, ToolMessage):
 
-            # Conservamos los resultados de Ventas
-            # asociados a sus llamadas anteriores.
             if mensaje.tool_call_id in llamadas_ventas:
                 contexto.append(mensaje)
 
-            # Incorporamos diagnósticos anteriores
-            # como información contextual.
             elif mensaje.name == "diagnosticar_problema":
                 contexto.append(
                     HumanMessage(
@@ -169,20 +282,24 @@ def construir_contexto_ventas(state: AgentState):
                     )
                 )
 
+
     return contexto
 
-# NODO DEL AGENTE DE VENTAS
+
+# =========================================================
+# NODO DEL AGENTE VENTAS
+# =========================================================
+
 def ventas_node(state: AgentState):
     """
-    Procesa las solicitudes comerciales.
-
-    Utiliza un contexto filtrado para evitar
-    interferencias con herramientas de otros agentes.
+    Procesa solicitudes comerciales utilizando
+    el contexto del inventario validado.
     """
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         *construir_contexto_ventas(state),
+        construir_contexto_inventario(state),
     ]
 
     try:

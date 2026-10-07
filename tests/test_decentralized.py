@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from langchain_core.messages import (
@@ -12,7 +13,7 @@ from app.agents.decentralized.graph import (
     MAX_HANDOFFS,
 )
 
-# TEST 1: DETECCIÓN DE TRANSFERENCIAS
+# TEST 1: DETECCIÃ“N DE TRANSFERENCIAS
 def test_detectar_handoff_tecnico():
     mensajes = [
         ToolMessage(
@@ -41,7 +42,7 @@ def test_registrar_handoff():
     estado = {
         "messages": [
             ToolMessage(
-                content="TRANSFERIR_VENTAS: Cotización",
+                content="TRANSFERIR_VENTAS: CotizaciÃ³n",
                 name="transferir_a_ventas",
                 tool_call_id="test-3",
             )
@@ -60,7 +61,7 @@ def test_registrar_handoff():
     ]
 
 
-# TEST 4: LÍMITE DE TRANSFERENCIAS
+# TEST 4: LÃMITE DE TRANSFERENCIAS
 
 def test_limite_handoffs():
     estado = {
@@ -129,7 +130,7 @@ def test_error_groq_ventas(monkeypatch):
     estado = {
         "messages": [
             HumanMessage(
-                content="¿Cuánto cuesta el mantenimiento?"
+                content="Â¿CuÃ¡nto cuesta el mantenimiento?"
             )
         ],
         "errors": [],
@@ -225,7 +226,7 @@ def test_error_herramienta():
         handle_tool_errors=True
     )
 
-    # Construimos un grafo mínimo
+    # Construimos un grafo mÃnimo
     builder = StateGraph(AgentState)
 
     builder.add_node("herramientas", nodo)
@@ -257,7 +258,7 @@ def test_error_herramienta():
     # Obtenemos el mensaje generado
     mensaje = resultado["messages"][-1]
 
-    # Verificamos que se capturó el error
+    # Verificamos que se capturÃ³ el error
     assert mensaje.status == "error"
     assert mensaje.tool_call_id == "call-test"
     assert "RuntimeError" in mensaje.content
@@ -275,7 +276,7 @@ from app.agents.decentralized.ventas import (
 def test_ventas_contexto_usuario():
     estado = {
         "messages": [
-            HumanMessage(content="Quiero una cotización")
+            HumanMessage(content="Quiero una cotizaciÃ³n")
         ]
     }
 
@@ -322,14 +323,14 @@ def test_ventas_excluir_handoff_soporte():
         tool_calls=[
             {
                 "name": "transferir_a_ventas",
-                "args": {"motivo": "Cotización"},
+                "args": {"motivo": "CotizaciÃ³n"},
                 "id": "call-soporte",
             }
         ],
     )
 
     resultado = ToolMessage(
-        content="TRANSFERIR_VENTAS: Cotización",
+        content="TRANSFERIR_VENTAS: CotizaciÃ³n",
         name="transferir_a_ventas",
         tool_call_id="call-soporte",
     )
@@ -343,7 +344,7 @@ def test_ventas_excluir_handoff_soporte():
     assert contexto == []
 
 
-# TEST 14: CONSERVAR DIAGNÓSTICO TÉCNICO
+# TEST 14: CONSERVAR DIAGNÃ“STICO TÃ‰CNICO
 def test_ventas_contexto_diagnostico():
     diagnostico = ToolMessage(
         content="Posible falla en la fuente",
@@ -459,7 +460,7 @@ def test_registrar_sin_handoff():
     assert resultado["next_agent"] == "soporte"
 
 
-# TEST 21: AUDITORÍA DE SOPORTE
+# TEST 21: AUDITORÃA DE SOPORTE
 def test_auditar_soporte():
     estado = {"messages": []}
 
@@ -468,7 +469,7 @@ def test_auditar_soporte():
     assert resultado["next_agent"] == "soporte"
 
 
-# TEST 22: AUDITORÍA DE TÉCNICO
+# TEST 22: AUDITORÃA DE TÃ‰CNICO
 def test_auditar_tecnico():
     estado = {"messages": []}
 
@@ -477,7 +478,7 @@ def test_auditar_tecnico():
     assert resultado["next_agent"] == "tecnico"
 
 
-# TEST 23: AUDITORÍA DE VENTAS
+# TEST 23: AUDITORÃA DE VENTAS
 def test_auditar_ventas():
     estado = {"messages": []}
 
@@ -492,3 +493,96 @@ def test_route_next_agent_default():
 
     assert route_next_agent(estado) == "finalizar"
 
+
+
+# TEST 25: HANDOFF ESTRUCTURADO A ALMACEN
+def test_handoff_almacen_registra_repuesto():
+    estado = {
+        "messages": [ToolMessage(
+            content=json.dumps({
+                "accion": "TRANSFERIR_ALMACEN",
+                "motivo": "Reemplazo confirmado",
+                "nombre_repuesto": "Memoria RAM 16GB DDR4 3200MHz",
+                "cantidad": 1,
+            }),
+            name="transferir_a_almacen",
+            tool_call_id="parte-25",
+        )],
+        "handoff_count": 0,
+        "handoff_history": [],
+        "errors": [],
+    }
+    resultado = registrar_handoff(estado, "tecnico")
+    assert resultado["next_agent"] == "almacen"
+    assert resultado["required_parts"] == [
+        {"name": "Memoria RAM 16GB DDR4 3200MHz", "quantity": 1}
+    ]
+    assert resultado["inventory_pending"] is True
+    assert resultado["handoff_count"] == 1
+    assert resultado["handoff_history"] == [
+        {"origen": "tecnico", "destino": "almacen"}
+    ]
+    assert not resultado.get("errors")
+
+
+# TEST 26: NO TRANSFERIR SIN NOMBRE DE REPUESTO
+def test_handoff_almacen_rechaza_nombre_vacio():
+    estado = {
+        "messages": [ToolMessage(
+            content=json.dumps({"error": "Nombre obligatorio"}),
+            name="transferir_a_almacen",
+            tool_call_id="parte-26",
+        )],
+        "handoff_count": 0,
+        "handoff_history": [],
+        "errors": [],
+    }
+    resultado = registrar_handoff(estado, "tecnico")
+    assert resultado["next_agent"] == "finalizar"
+    assert resultado.get("required_parts", []) == []
+    assert resultado.get("handoff_count", 0) == 0
+    assert resultado.get("handoff_history", []) == []
+    assert resultado.get("errors")
+
+
+# TEST 27: RECHAZAR CANTIDAD INVALIDA
+@pytest.mark.parametrize("cantidad", [0, -1, True, "2", None])
+def test_handoff_almacen_rechaza_cantidad_invalida(cantidad):
+    estado = {
+        "messages": [ToolMessage(
+            content=json.dumps({
+                "accion": "TRANSFERIR_ALMACEN",
+                "nombre_repuesto": "RAM",
+                "cantidad": cantidad,
+            }),
+            name="transferir_a_almacen",
+            tool_call_id="parte-27",
+        )],
+        "handoff_count": 0,
+        "handoff_history": [],
+        "errors": [],
+    }
+    resultado = registrar_handoff(estado, "tecnico")
+    assert resultado["next_agent"] == "finalizar"
+    assert resultado.get("required_parts", []) == []
+    assert resultado.get("handoff_count", 0) == 0
+    assert resultado.get("errors")
+
+
+# TEST 28: RECHAZAR FALLO EXPLICITO DE HERRAMIENTA
+def test_handoff_almacen_rechaza_error_herramienta():
+    estado = {
+        "messages": [ToolMessage(
+            content="Error simulado",
+            name="transferir_a_almacen",
+            tool_call_id="parte-28",
+            status="error",
+        )],
+        "handoff_count": 0,
+        "handoff_history": [],
+        "errors": [],
+    }
+    resultado = registrar_handoff(estado, "tecnico")
+    assert resultado.get("next_agent") != "almacen"
+    assert resultado.get("required_parts", []) == []
+    assert resultado.get("handoff_count", 0) == 0

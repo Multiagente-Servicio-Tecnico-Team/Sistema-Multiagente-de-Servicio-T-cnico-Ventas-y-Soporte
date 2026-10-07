@@ -74,21 +74,24 @@ def test_diagnostico_normalizacion():
     assert "fuente" in resultado.lower()
 
 
-# PRUEBA 6: COTIZACIONES
+# PRUEBA 6: SERVICIOS SIN TARIFA VERIFICADA
 @pytest.mark.parametrize(
-    "servicio, precio",
+    "servicio",
     [
-        ("diagnóstico", 50),
-        ("mantenimiento", 80),
-        ("reparación", 120),
-        ("instalación", 70),
+        "diagnóstico",
+        "mantenimiento",
+        "reparación",
+        "instalación",
     ],
 )
-def test_cotizaciones(servicio, precio):
+def test_cotizaciones(servicio):
     resultado = generar_cotizacion.invoke(
         {"servicio": servicio}
     )
-    assert f"S/ {precio}" in resultado
+
+    assert "Tarifa de mano de obra pendiente" in resultado
+    assert "No se puede confirmar un precio total" in resultado
+    assert "S/" not in resultado
 
 
 # PRUEBA 7: SERVICIO DESCONOCIDO
@@ -96,15 +99,20 @@ def test_cotizacion_desconocida():
     resultado = generar_cotizacion.invoke(
         {"servicio": "Servicio desconocido"}
     )
-    assert "No se encontró" in resultado
+
+    assert "No se encontro" in resultado
+    assert "S/" not in resultado
 
 
-# PRUEBA 8: NORMALIZACIÓN DE COTIZACIÓN
+# PRUEBA 8: NORMALIZACION
 def test_cotizacion_normalizacion():
     resultado = generar_cotizacion.invoke(
         {"servicio": "  REPARACIÓN  "}
     )
-    assert "S/ 120" in resultado
+
+    assert "Servicio: reparacion" in resultado
+    assert "Tarifa de mano de obra pendiente" in resultado
+    assert "S/" not in resultado
 
 
 # PRUEBA 9: HANDOFFS DE SOPORTE

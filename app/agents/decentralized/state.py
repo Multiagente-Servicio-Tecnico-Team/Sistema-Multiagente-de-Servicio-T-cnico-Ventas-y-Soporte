@@ -5,24 +5,28 @@ from langgraph.graph.message import add_messages
 
 
 class AgentState(TypedDict, total=False):
-    # Historial compartido entre los agentes
+    # Historial compartido entre agentes
     messages: Annotated[list[AnyMessage], add_messages]
 
-    # Agente que ejecutó la última acción
+    # Agente actual y siguiente
     current_agent: str
-
-    # Agente al que se solicita transferir el control
     next_agent: str | None
 
-    # Registro de transferencias realizadas
+    # Control de transferencias
     handoff_history: list[dict[str, Any]]
-
-    # Número de transferencias de la solicitud
     handoff_count: int
 
-    # Número de ejecuciones de herramientas por agente
+    # Control de herramientas
     tool_iterations: dict[str, int]
 
+    # Repuestos identificados para la reparación
+    required_parts: list[dict[str, Any]]
 
-    # Errores controlados durante la ejecución
+    # Indica si falta verificar el inventario
+    inventory_pending: bool
+
+    # Resultados obtenidos de PostgreSQL
+    inventory_results: list[dict[str, Any]]
+
+    # Errores registrados
     errors: list[str]
