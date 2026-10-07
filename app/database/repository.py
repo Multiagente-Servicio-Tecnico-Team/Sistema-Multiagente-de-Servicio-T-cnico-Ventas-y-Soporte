@@ -171,7 +171,7 @@ def lookup_inventory(
     with engine.connect() as connection:
         table = _table(connection, table_name)
         name_column = _column(table, "name", "nombre", "nombre_repuesto", "articulo", "producto")
-        stock_column = _column(table, "current_stock", "stock", "cantidad", "existencias", "disponible")
+        stock_column = _column(table,"current_stock","stock_actual","stock","cantidad","existencias","disponible")
         price_column = _column(table, "unit_price", "precio", "precio_unitario", "costo")
         id_column = _column(table, "id", "spare_part_id", "repuesto_id")
         active_column = _column(table, "active", "activo")
@@ -184,20 +184,22 @@ def lookup_inventory(
             query = query.where(active_column.is_(True))
         rows = connection.execute(query).mappings().all()
 
-    requested = _normalize(requested_name)
+    requested = re.sub(r"(\d)\s+(gb|tb)\b", r"\1\2", _normalize(requested_name))
     requested_tokens = set(re.findall(r"[a-z0-9]+", requested))
     matches = []
     for candidate in rows:
         item_name = str(candidate[name_column.name])
-        normalized_name = _normalize(item_name)
+        normalized_name = re.sub(r"(\d)\s+(gb|tb)\b", r"\1\2", _normalize(item_name))
         item_tokens = set(re.findall(r"[a-z0-9]+", normalized_name))
-        score = len(requested_tokens & item_tokens) / max(len(requested_tokens), 1)
-        if requested in normalized_name or normalized_name in requested:
-            score = 1.0
-        if score >= 0.5:
+        # Todos los términos deben coincidir: 5000GB no equivale a 500GB,
+        # ni SATA a NVMe. La similitud parcial no confirma un producto.
+        score = 2 if requested == normalized_name else 1
+        if requested_tokens and requested_tokens.issubset(item_tokens):
             matches.append((score, candidate))
 
-    if not matches:
+    best = max((score for score, _ in matches), default=0)
+    finalists = [row for score, row in matches if score == best]
+    if len(finalists) != 1:
         return {
             "requested_name": requested_name,
             "name": requested_name,
@@ -206,9 +208,11 @@ def lookup_inventory(
             "unit_price": Decimal("0.00"),
             "available": False,
             "inventory_id": None,
+            "found": False,
+            "match_status": "ambiguous" if finalists else "not_found",
         }
 
-    _, row = max(matches, key=lambda match: match[0])
+    row = finalists[0]
     stock = int(row[stock_column.name] or 0)
     return {
         "requested_name": requested_name,
@@ -218,6 +222,7 @@ def lookup_inventory(
         "unit_price": Decimal(str(row[price_column.name] or 0)),
         "available": stock >= quantity,
         "inventory_id": row[id_column.name] if id_column is not None else None,
+        "found": True,
     }
 
 
@@ -299,7 +304,7 @@ def create_ticket_with_quote(
     labor_cost: Decimal,
     available_parts: list[dict[str, object]],
     engine: Engine | None = None,
-) -> tuple[int, int, Decimal, str]:
+) -> tuple[int, int, Decimal]:
     engine = engine or get_engine()
     labor_cost = Decimal(str(labor_cost)).quantize(Decimal("0.01"))
     parts_total = sum(
@@ -311,14 +316,13 @@ def create_ticket_with_quote(
     ).quantize(Decimal("0.01"))
     total = labor_cost + parts_total
 
-    ticket_code = f"TCK-{uuid4().hex[:12].upper()}"
     with engine.begin() as connection:
         tickets = _table(connection, "tickets")
         ticket_id = _insert_row(
             connection,
             tickets,
             {
-                "code": ticket_code,
+                "code": f"TCK-{uuid4().hex[:12].upper()}",
                 "customer_id": user_id,
                 "title": f"{product} - {category}"[:200],
                 "failure_description": symptoms,
@@ -362,7 +366,7 @@ def create_ticket_with_quote(
             .values({ticket_status: "QUOTED"})
         )
 
-    return ticket_id, quote_id, total, ticket_code
+    return ticket_id, quote_id, total
 from collections.abc import Callable
 from decimal import Decimal
 import re

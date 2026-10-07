@@ -27,3 +27,6 @@ multiagent-architecture.md
 
 .local/
 .pytest_cache/
+
+# Base vectorial RAG
+data/chroma/
