@@ -9,6 +9,7 @@ from types import ModuleType
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
+from langgraph.checkpoint.memory import MemorySaver
 
 from app.agents.decentralized.conversation import Conversation
 
@@ -107,7 +108,7 @@ def graph(monkeypatch):
     spec = importlib.util.spec_from_file_location("isolated_conversation_graph", ROOT / "app/agents/decentralized/graph.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.graph
+    return module.build_graph(checkpointer=MemorySaver())
 
 
 def test_continua_tecnico_y_luego_ventas_sin_reiniciar_soporte(graph):
@@ -156,6 +157,27 @@ def test_solicitud_nueva_descarta_inventario_y_diagnostico():
     assert "required_parts" not in state and "inventory_results" not in state
     assert "current_agent" not in state
     assert len(state["messages"]) == 1
+
+
+def test_conversation_reuses_checkpoint_thread_until_new_request():
+    class Graph:
+        def __init__(self):
+            self.configs = []
+
+        def invoke(self, state, config):
+            self.configs.append(config)
+            return {**state, "messages": state["messages"]}
+
+    graph = Graph()
+    conversation = Conversation(graph)
+
+    conversation.send("Primera consulta")
+    conversation.send("Continuación")
+    first_thread = graph.configs[0]["configurable"]["thread_id"]
+    assert graph.configs[1]["configurable"]["thread_id"] == first_thread
+
+    conversation.send("Consulta independiente", new_request=True)
+    assert graph.configs[2]["configurable"]["thread_id"] != first_thread
 
 
 def test_turno_fallido_no_guarda_mensaje_y_vacio_no_invoca():
@@ -263,7 +285,7 @@ def test_revision_permitida_aunque_inventario_siga_pendiente(graph):
     result = graph.invoke({
         "messages": [HumanMessage(content="revision-solo-servicio")],
         "current_agent": "tecnico", "inventory_pending": True,
-    })
+    }, config={"configurable": {"thread_id": "revision-pendiente"}})
     assert result["current_agent"] == "ventas"
     assert result["quote_scope"] == "solo_servicio"
     assert result["inventory_pending"] is True

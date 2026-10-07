@@ -74,6 +74,24 @@ Resultado de validación:
   modificados; el escaneo de imports no encontró módulos sin resolver.
 - `git diff --check`: correcto.
 
+## Corrección posterior — habilitar ejecución del patrón descentralizado
+
+- Se reparó la fábrica `build_graph()` que faltaba en el módulo descentralizado
+  y provocaba `NameError` durante su importación.
+- Se conectaron las dependencias RAG al manifiesto de instalación raíz y se
+  documentó la generación inicial del índice local.
+- La API ahora obtiene el estado del `thread_id` y restablece los contadores e
+  historial de control del turno, sin eliminar mensajes ni contexto de negocio.
+- La conversación local reutiliza un `thread_id` estable y lo rota para una
+  solicitud nueva; el grafo global sin checkpoint sigue siendo invocable por las
+  pruebas y el CLI que mantienen su estado por instancia.
+- Resultado de esta corrección: 112 pruebas API/agentes aisladas aprobadas,
+  `pip check` limpio, imports RAG resueltos y `git diff --check` limpio. Se
+  generó el índice con 3 documentos y 3 fragmentos; una consulta local recuperó
+  `ventas.md` y `tecnico.md`.
+- No se realizaron llamadas a Groq, PostgreSQL ni LangSmith en esta validación.
+  Ver el detalle y comando reproducible en `docs/07-ajustes-ejecucion-red-descentralizada.md`.
+
 La suite indiscriminada `pytest tests` no es segura/aislada: `tests/test_database.py`
 y `tests/test_email.py` ejecutan consultas PostgreSQL y autenticación SMTP al
 recolectarse. La prueba E2E de Red Descentralizada también llama a Groq real; por

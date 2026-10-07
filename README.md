@@ -105,8 +105,22 @@ Copiar `.env.example` a `.env` y completar:
 | `LANGSMITH_API_KEY`, `LANGSMITH_TRACING`, `LANGSMITH_PROJECT` | Trazabilidad en LangSmith |
 | `LANGSMITH_HIDE_INPUTS`, `LANGSMITH_HIDE_OUTPUTS` | Ocultamiento de contenido en las trazas |
 
+La instalación raíz incluye las dependencias de API, agentes y RAG mediante
+`requirements-agent.txt`. Para crear o actualizar el índice vectorial local una
+vez instaladas las dependencias, ejecuta:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.rag.ingest
+```
+
+La ingesta descarga el modelo FastEmbed la primera vez y guarda el índice en
+`data/chroma/`, que está excluido de Git. Debe repetirse cuando cambie el
+contenido de `data/knowledge/`.
+
 El frontend usa `landing/.env` (ver `landing/.env.example`): `VITE_API_URL` para la API de cuentas y
-`VITE_CHAT_URL` para el patrón del chat. Sin ellas funciona en modo demostración.
+`VITE_CHAT_URL` para el patrón del chat. Los valores locales por defecto son
+`http://localhost:8000` y `http://localhost:8001`; Vite los carga al iniciar,
+así que reinicia el servidor frontend después de modificarlos.
 Las dos APIs deben usar el mismo `AUTH_SECRET` (mínimo 32 caracteres); para
 desarrollo HTTP local, configurar `AUTH_SECURE_COOKIE=false`.
 

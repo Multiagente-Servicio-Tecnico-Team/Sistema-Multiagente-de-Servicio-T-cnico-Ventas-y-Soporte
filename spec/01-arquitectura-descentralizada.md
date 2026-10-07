@@ -50,7 +50,7 @@ Las rutas pueden ser solicitadas por el modelo o por reglas deterministas. Una s
 
 `AgentState` contiene mensajes, agente actual y siguiente, historial y contador de handoffs, iteraciones de herramientas, repuestos requeridos, resultados de inventario, alcance de cotización y errores. `turn_start_index` permite distinguir las herramientas del turno actual.
 
-El historial de mensajes usa el reductor `add_messages`. `Conversation` reinicia los controles por turno y conserva el contexto de negocio. El grafo establece límites de cinco transferencias y seis iteraciones de herramientas por agente.
+El historial de mensajes usa el reductor `add_messages`. `Conversation` y la API autenticada reinician los controles por turno y conservan el contexto de negocio. En API, `turn_start_index` se calcula desde los mensajes del checkpoint del `thread_id`, para que las herramientas previas no se confundan con las del turno actual. El grafo establece límites de cinco transferencias y seis iteraciones de herramientas por agente.
 
 Las cotizaciones utilizan `Decimal` y moneda PEN. No se confirma mano de obra sin tarifa verificada; disponibilidad no implica compatibilidad, reserva ni compra. La identificación de repuestos evita aceptar automáticamente un componente inventado por el modelo.
 
@@ -61,6 +61,8 @@ Los documentos Markdown de `data/knowledge/` se cargan mediante `cargar_document
 `buscar_conocimiento()` en `app/rag/retriever.py` realiza búsquedas semánticas. Soporte, Técnico y Ventas disponen de la herramienta `consultar_base_conocimiento`, que devuelve fragmentos con su fuente. Almacén consulta inventario mediante sus herramientas.
 
 La existencia de este flujo no garantiza la fundamentación de cada respuesta. Queda pendiente evaluar relevancia, fidelidad documental y cobertura del conocimiento. La recuperación actual no aplica filtro por área ni umbral de relevancia; la configuración de ingesta y recuperación está duplicada.
+
+La instalación raíz incluye `requirements-agent.txt`, que declara las dependencias del RAG. Tras instalarlas, se debe ejecutar `python -m app.rag.ingest` para generar el índice local `data/chroma/`; no se crea automáticamente al iniciar la API.
 
 ## Evidencia de validación
 

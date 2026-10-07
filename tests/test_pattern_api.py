@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,6 +31,10 @@ class FakeGraph:
     def __init__(self, pattern):
         self.pattern = pattern
         self.calls = []
+        self.checkpoint_values = {}
+
+    def get_state(self, config):
+        return SimpleNamespace(values=self.checkpoint_values)
 
     def invoke(self, state, *, config):
         self.calls.append((state, config))
@@ -144,6 +149,43 @@ def test_selector_lists_patterns_and_chat_runs_selected_graph(pattern_client):
     assert "customer_id" not in metadata
     assert not graphs["hierarchical"].calls
     assert not graphs["orchestrator"].calls
+
+
+def test_decentralized_api_resets_turn_controls_from_checkpoint(pattern_client):
+    client, graphs = pattern_client
+    first = client.post(
+        "/api/chat",
+        json={"message": "Consulta inicial", "pattern": "decentralized"},
+    )
+    conversation_id = first.json()["conversation_id"]
+    graph = graphs["decentralized"]
+    graph.checkpoint_values = {
+        "messages": [HumanMessage(content="anterior"), AIMessage(content="respuesta")],
+        "handoff_count": 5,
+        "handoff_history": [{"origen": "soporte", "destino": "tecnico"}],
+        "tool_iterations": {"soporte": 4},
+        "errors": ["fallo previo"],
+        "current_agent": "tecnico",
+    }
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "conversation_id": conversation_id,
+            "message": "Nueva pregunta",
+            "pattern": "decentralized",
+        },
+    )
+
+    assert response.status_code == 200
+    state = graph.calls[-1][0]
+    assert state["turn_start_index"] == 2
+    assert state["handoff_count"] == 0
+    assert state["handoff_history"] == []
+    assert state["tool_iterations"] == {}
+    assert state["errors"] == []
+    assert state["next_agent"] is None
+    assert state["messages"] == [HumanMessage(content="Nueva pregunta")]
 
 
 def test_hierarchical_quote_save_and_pattern_lock(pattern_client):

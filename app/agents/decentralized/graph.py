@@ -1,7 +1,6 @@
 import json
 
 from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 
@@ -398,4 +397,10 @@ for auditor in (
 ):
     builder.add_conditional_edges(auditor, route_next_agent, rutas)
 
-graph = build_graph(checkpointer=MemorySaver())
+
+def build_graph(*, checkpointer=None):
+    """Compila la red con el checkpointer opcional del consumidor."""
+    return builder.compile(checkpointer=checkpointer)
+
+
+graph = build_graph()

@@ -295,8 +295,20 @@ def create_app(
                 "conversation_id": conversation_id,
             },
         }
+        graph = get_graph(pattern)
+        if pattern == "decentralized":
+            checkpoint = graph.get_state(config)
+            checkpoint_values = checkpoint.values
+            state.update(
+                turn_start_index=len(checkpoint_values.get("messages", [])),
+                handoff_count=0,
+                handoff_history=[],
+                tool_iterations={},
+                errors=[],
+                next_agent=None,
+            )
         with (trace_context_factory or (lambda: get_trace_context(settings_factory())))():
-            return get_graph(pattern).invoke(state, config=config)
+            return graph.invoke(state, config=config)
 
     @app.get("/api/chat/patterns")
     def patterns(_customer: SessionCustomer = Depends(require_customer)):
