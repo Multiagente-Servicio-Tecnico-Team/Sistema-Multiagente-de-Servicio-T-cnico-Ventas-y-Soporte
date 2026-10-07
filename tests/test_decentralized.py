@@ -366,9 +366,13 @@ def test_ventas_contexto_diagnostico():
 
 # TEST 15: EXCLUIR MENSAJES INTERNOS
 def test_ventas_excluir_mensajes_internos():
+    respuesta = AIMessage(content="¿Qué capacidad necesitas?")
     estado = {
         "messages": [
-            AIMessage(content="Mensaje interno"),
+            respuesta,
+            AIMessage(content="", tool_calls=[{
+                "name": "herramienta_ajena", "args": {}, "id": "call-ajena",
+            }]),
             ToolMessage(
                 content="Resultado ajeno",
                 name="herramienta_ajena",
@@ -379,7 +383,7 @@ def test_ventas_excluir_mensajes_internos():
 
     contexto = construir_contexto_ventas(estado)
 
-    assert contexto == []
+    assert contexto == [respuesta]
 
 
 # PRUEBAS ADICIONALES DEL GRAFO
@@ -498,7 +502,7 @@ def test_route_next_agent_default():
 # TEST 25: HANDOFF ESTRUCTURADO A ALMACEN
 def test_handoff_almacen_registra_repuesto():
     estado = {
-        "messages": [ToolMessage(
+        "messages": [HumanMessage(content="Necesito Memoria RAM 16GB DDR4 3200MHz"), ToolMessage(
             content=json.dumps({
                 "accion": "TRANSFERIR_ALMACEN",
                 "motivo": "Reemplazo confirmado",

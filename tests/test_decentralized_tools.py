@@ -131,11 +131,17 @@ def test_handoffs_soporte():
 # PRUEBA 10: HANDOFFS DE TÉCNICO Y VENTAS
 def test_handoffs_otros_agentes():
     ventas = tecnico_a_ventas.invoke(
-        {"motivo": "Necesita cotización"}
+        {"motivo": "Necesita cotización", "alcance": "solo_servicio"}
     )
     tecnico = ventas_a_tecnico.invoke(
         {"motivo": "Necesita diagnóstico"}
     )
 
-    assert ventas == "TRANSFERIR_VENTAS: Necesita cotización"
+    assert ventas == {
+        "accion": "SOLICITAR_COTIZACION",
+        "motivo": "Necesita cotización",
+        "alcance": "solo_servicio",
+        "nombre_repuesto": "",
+        "cantidad": 1,
+    }
     assert tecnico == "TRANSFERIR_TECNICO: Necesita diagnóstico"
