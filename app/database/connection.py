@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
+from sqlalchemy import create_engine, make_url
 from sqlalchemy.orm import sessionmaker
 
 from app.settings import load_settings
