@@ -20,5 +20,9 @@ class AgentState(TypedDict, total=False):
     # Número de transferencias de la solicitud
     handoff_count: int
 
+    # Número de ejecuciones de herramientas por agente
+    tool_iterations: dict[str, int]
+
+
     # Errores controlados durante la ejecución
     errors: list[str]

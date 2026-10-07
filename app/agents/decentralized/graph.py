@@ -14,6 +14,7 @@ from app.agents.decentralized.ventas import ventas_node, ventas_tools
 # =========================================================
 
 MAX_HANDOFFS = 5
+MAX_TOOL_ITERATIONS = 6
 
 # Herramientas que transfieren el control
 HANDOFF_TOOLS = {
@@ -28,14 +29,14 @@ HANDOFF_TOOLS = {
 
 def detectar_handoff(messages):
     """
-    Identifica qué herramienta fue ejecutada.
+    Identifica si se ejecutó una herramienta de transferencia.
 
-    No depende del texto que devuelve la herramienta.
+    No depende del texto devuelto por la herramienta.
     """
 
-    # Buscamos los resultados de la última ejecución
     tool_messages = []
 
+    # Recuperamos los resultados de la última ejecución
     for message in reversed(messages):
         if isinstance(message, ToolMessage):
             tool_messages.append(message)
@@ -45,7 +46,7 @@ def detectar_handoff(messages):
     if not tool_messages:
         return None
 
-    # Verificamos qué herramientas se ejecutaron
+    # Verificamos las herramientas ejecutadas
     for message in reversed(tool_messages):
         if message.status == "error":
             continue
@@ -64,8 +65,8 @@ def detectar_handoff(messages):
 
 def registrar_handoff(state: AgentState, origen: str):
     """
-    Registra una transferencia entre agentes y
-    evita que se produzcan demasiados handoffs.
+    Registra las transferencias entre agentes y controla
+    el número de ejecuciones de herramientas.
     """
 
     destino = detectar_handoff(state["messages"])
@@ -74,15 +75,56 @@ def registrar_handoff(state: AgentState, origen: str):
     contador = state.get("handoff_count", 0)
     errores = list(state.get("errors", []))
 
-    # No hubo transferencia
-    if destino is None:
-        return {"next_agent": origen}
+    # -----------------------------------------------------
+    # CONTROL DE ITERACIONES DE HERRAMIENTAS
+    # -----------------------------------------------------
 
-    # Evitamos transferencias al mismo agente
-    if destino == origen:
-        errores.append("Transferencia al mismo agente")
+    iteraciones = dict(state.get("tool_iterations", {}))
+
+    iteraciones[origen] = (
+        iteraciones.get(origen, 0) + 1
+    )
+
+    # Detener ejecuciones excesivas
+    if iteraciones[origen] >= MAX_TOOL_ITERATIONS:
+        errores.append(
+            f"Límite de herramientas alcanzado por {origen}"
+        )
+
         return {
             "next_agent": "finalizar",
+            "tool_iterations": iteraciones,
+            "errors": errores,
+            "messages": [
+                AIMessage(
+                    content=(
+                        "No fue posible completar la solicitud "
+                        "dentro del límite de operaciones permitido."
+                    )
+                )
+            ],
+        }
+
+    # -----------------------------------------------------
+    # SIN TRANSFERENCIA
+    # -----------------------------------------------------
+
+    if destino is None:
+        return {
+            "next_agent": origen,
+            "tool_iterations": iteraciones,
+        }
+
+    # -----------------------------------------------------
+    # TRANSFERENCIA AL MISMO AGENTE
+    # -----------------------------------------------------
+
+    if destino == origen:
+        errores.append("Transferencia al mismo agente")
+
+        return {
+            "next_agent": "finalizar",
+            "tool_iterations": iteraciones,
             "errors": errores,
             "messages": [
                 AIMessage(
@@ -91,12 +133,16 @@ def registrar_handoff(state: AgentState, origen: str):
             ],
         }
 
-    # Control de límite
+    # -----------------------------------------------------
+    # LÍMITE DE TRANSFERENCIAS
+    # -----------------------------------------------------
+
     if contador >= MAX_HANDOFFS:
         errores.append("Límite de transferencias alcanzado")
 
         return {
             "next_agent": "finalizar",
+            "tool_iterations": iteraciones,
             "errors": errores,
             "messages": [
                 AIMessage(
@@ -108,7 +154,10 @@ def registrar_handoff(state: AgentState, origen: str):
             ],
         }
 
-    # Registramos la transferencia
+    # -----------------------------------------------------
+    # REGISTRO DE TRANSFERENCIA
+    # -----------------------------------------------------
+
     historial.append({
         "origen": origen,
         "destino": destino,
@@ -118,6 +167,7 @@ def registrar_handoff(state: AgentState, origen: str):
         "next_agent": destino,
         "handoff_count": contador + 1,
         "handoff_history": historial,
+        "tool_iterations": iteraciones,
     }
 
 
@@ -171,6 +221,7 @@ builder.add_node(
     "ventas_tools",
     ToolNode(ventas_tools, handle_tool_errors=True)
 )
+
 # Auditoría de transferencias
 builder.add_node("auditar_soporte", auditar_soporte)
 builder.add_node("auditar_tecnico", auditar_tecnico)
@@ -213,7 +264,7 @@ builder.add_edge("ventas_tools", "auditar_ventas")
 # =========================================================
 
 # Cada agente puede continuar o transferir el control.
-# No existe un supervisor que tome las decisiones.
+# No existe un supervisor central.
 
 rutas = {
     "soporte": "soporte",
