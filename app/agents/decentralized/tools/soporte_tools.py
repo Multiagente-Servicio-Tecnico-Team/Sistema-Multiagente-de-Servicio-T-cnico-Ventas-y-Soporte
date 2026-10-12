@@ -1,6 +1,15 @@
 from langchain_core.tools import tool
 
 
+@tool
+def transferir_a_soporte(motivo: str) -> str:
+    """Devuelve a Soporte una consulta de ticket o atención general.
+
+    No registra citas ni solicitudes: solamente transfiere la conversación.
+    """
+    return f"TRANSFERIR_SOPORTE: {motivo}"
+
+
 @tool #decorador de python
 def consultar_estado_ticket(numero_ticket: int) -> str:
     """

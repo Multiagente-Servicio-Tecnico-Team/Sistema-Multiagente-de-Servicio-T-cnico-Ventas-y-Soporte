@@ -59,6 +59,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
 
     app = FastAPI(title="TechFix.AI · Cuentas", version="1.0.0")
     app.state.settings = settings
+    app.state.session_factory = session_factory
     app.state.limiter = LoginLimiter(settings.max_failed_logins, settings.lockout_seconds)
     app.state.reset_limiter = LoginLimiter(settings.max_reset_requests, settings.lockout_seconds)
     app.state.mailer = mailer or build_mailer(settings.mail_mode, settings.outbox_dir)

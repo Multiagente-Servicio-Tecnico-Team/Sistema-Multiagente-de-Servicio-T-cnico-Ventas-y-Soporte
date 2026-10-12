@@ -400,6 +400,11 @@
 .quote__sum small { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--muted); }
 
 .copilot__composer { display: grid; gap: 12px; padding: 16px 20px 18px; background: #f0f4fc; }
+.pattern-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--line); background: #f8faff; }
+.pattern-picker label { color: var(--ink); font-size: 12px; font-weight: 600; }
+.pattern-picker select { min-height: 34px; padding: 5px 28px 5px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); color: var(--ink); font: inherit; font-size: 13px; }
+.pattern-picker select:disabled { opacity: 0.75; }
+.pattern-picker .mono-small { color: var(--muted); }
 .quick { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .quick__btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 0; border-radius: 999px; background: var(--white); color: var(--ink); font-size: 13px; box-shadow: 0 1px 2px rgba(13, 27, 46, 0.06); }
 .quick__btn:hover { color: var(--blue-600); }

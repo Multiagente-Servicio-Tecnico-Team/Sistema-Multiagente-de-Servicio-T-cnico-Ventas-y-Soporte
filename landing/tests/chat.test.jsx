@@ -43,7 +43,7 @@ describe("cliente del chat", () => {
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe("http://chat.local/api/chat");
     expect(init.credentials).toBe("include");
-    expect(JSON.parse(init.body)).toEqual({ conversation_id: null, message: "Mi laptop no enciende", action: null });
+    expect(JSON.parse(init.body)).toEqual({ conversation_id: null, message: "Mi laptop no enciende", action: null, pattern: "hierarchical" });
   });
 
   it.each([[401, "session_required"], [403, "customer_only"], [404, "not_found"], [429, "rate_limited"], [503, "unavailable"]])(
@@ -63,22 +63,47 @@ describe("asistente conectado", () => {
       mode: "api",
       sendMessage: vi.fn()
         .mockResolvedValueOnce({ conversation_id: "c1", reply: "Preparé el presupuesto.", quote: QUOTE, ticket: { code: "TCK-4F2A1C", status: "QUOTED" } })
-        .mockResolvedValueOnce({ conversation_id: "c1", reply: "Listo, registré tu aprobación.", quote: { ...QUOTE, status: "confirmed" }, ticket: { code: "TCK-4F2A1C", status: "IN_REPAIR" } }),
+        .mockResolvedValueOnce({ conversation_id: "c1", reply: "Guardé el ticket y presupuesto.", quote: { ...QUOTE, status: "saved" }, ticket: { code: "TCK-4F2A1C", status: "QUOTED" } }),
     };
     const user = userEvent.setup();
     renderChat(api);
 
     expect(screen.getByText(/Hola, Ana/)).toBeInTheDocument();
     await write(user, "Mi laptop no detecta el disco");
-    expect(api.sendMessage).toHaveBeenCalledWith({ conversationId: null, message: "Mi laptop no detecta el disco" });
+    expect(api.sendMessage).toHaveBeenCalledWith({ conversationId: null, pattern: "hierarchical", message: "Mi laptop no detecta el disco" });
     expect(await screen.findByText("Preparé el presupuesto.")).toBeInTheDocument();
     expect(screen.getByText("S/. 260.00")).toBeInTheDocument();
-    expect(screen.getByText("Estado: Presupuesto enviado")).toBeInTheDocument();
+    expect(screen.getAllByText("Estado: Presupuesto enviado").length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole("button", { name: /aceptar presupuesto/i }));
-    expect(api.sendMessage).toHaveBeenLastCalledWith({ conversationId: "c1", action: "accept_quote" });
-    expect(await screen.findByText("Estado: En reparación")).toBeInTheDocument();
-    expect(screen.getAllByText(/Presupuesto aceptado/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: /confirmar y guardar/i }));
+    expect(api.sendMessage).toHaveBeenLastCalledWith({ conversationId: "c1", pattern: "hierarchical", action: "accept_quote" });
+    expect((await screen.findAllByText("Estado: Presupuesto enviado")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/pendiente de aceptación/).length).toBeGreaterThan(0);
+  });
+
+  it("permite elegir el patrón antes de empezar y bloquea cambios durante la conversación", async () => {
+    const api = {
+      mode: "api",
+      sendMessage: vi.fn().mockResolvedValue({ conversation_id: "c1", reply: "Respuesta del patrón." }),
+    };
+    const user = userEvent.setup();
+    renderChat(api);
+
+    const selector = screen.getByLabelText("Patrón de agentes");
+    await user.selectOptions(selector, "decentralized");
+    expect(screen.getByRole("status")).toHaveTextContent("no guarda tickets ni presupuestos");
+    await write(user, "Mi laptop no enciende desde ayer");
+    expect(api.sendMessage).toHaveBeenCalledWith({
+      conversationId: null,
+      pattern: "decentralized",
+      message: "Mi laptop no enciende desde ayer",
+    });
+    expect(selector).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: /nueva conversación/i }));
+    expect(selector).toBeEnabled();
+    await user.selectOptions(selector, "orchestrator");
+    expect(selector).toHaveValue("orchestrator");
   });
 
   it("si la sesión terminó lleva al acceso", async () => {

@@ -77,6 +77,17 @@ postman/techfix-auth.postman_collection.json   # Pruebas de API con Postman
 
 ## Ejecución local
 
+Para ejecutar cuentas y chat juntos (opción recomendada para que compartan el
+mismo host y cookie), inicia el punto de entrada unificado desde la raíz:
+
+```bash
+.venv/Scripts/python -m uvicorn app.combined:create_app --factory --host localhost --port 8000
+```
+
+En esta modalidad, todas las rutas de esta API llevan el prefijo `/auth`
+(por ejemplo, `POST /auth/login` y `GET /auth/me`). La API puede ejecutarse por
+separado con las rutas sin prefijo descritas arriba:
+
 1. Crear la base de datos y aplicar el script del equipo:
 
    ```bash
@@ -104,7 +115,7 @@ postman/techfix-auth.postman_collection.json   # Pruebas de API con Postman
 
    `AUTH_SECRET` se puede generar con `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 
-4. Iniciar la API:
+4. Iniciar solo la API de cuentas:
 
    ```bash
    .venv/Scripts/python -m uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
