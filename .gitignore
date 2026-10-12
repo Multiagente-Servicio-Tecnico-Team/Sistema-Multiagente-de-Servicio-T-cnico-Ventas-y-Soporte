@@ -25,3 +25,9 @@ multiagent-architecture.md
 node_modules/
 .local
 dist/
+
+
+# Cobertura de pruebas
+.coverage
+.local/
+.pytest_cache/
