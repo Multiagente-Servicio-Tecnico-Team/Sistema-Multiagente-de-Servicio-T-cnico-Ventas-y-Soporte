@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def graph(monkeypatch):
+def graph_module(monkeypatch):
     from app.agents.decentralized.tools.soporte_tools import transferir_a_soporte
     from app.agents.decentralized.tools.tecnico_tools import transferir_a_ventas
 
@@ -107,7 +107,55 @@ def graph(monkeypatch):
     spec = importlib.util.spec_from_file_location("isolated_conversation_graph", ROOT / "app/agents/decentralized/graph.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.graph
+    return module
+
+
+@pytest.fixture
+def graph(graph_module):
+    return graph_module.graph
+
+
+def test_importacion_y_fabrica_sin_checkpointer(graph_module):
+    assert graph_module.graph.checkpointer is None
+    first = graph_module.build_graph()
+    second = graph_module.build_graph()
+    assert first is not second
+    result = first.invoke({"messages": [HumanMessage(content="Mi PC no enciende")]})
+    assert result["current_agent"] == "tecnico"
+    assert {"soporte", "tecnico", "ventas", "almacen"} <= set(first.nodes)
+
+
+def test_checkpointer_continuidad_aislamiento_y_controles(graph_module):
+    from langgraph.checkpoint.memory import MemorySaver
+
+    graph = graph_module.build_graph(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "cliente-a"}, "recursion_limit": 100}
+    first = graph.invoke({"messages": [HumanMessage(content="Mi PC no enciende")]}, config)
+    # Simula controles agotados del turno anterior, recuperados desde memoria.
+    graph.update_state(config, {"handoff_count": 5, "tool_iterations": {"tecnico": 6},
+                                "errors": ["Error anterior"], "next_agent": "finalizar"})
+    second = graph.invoke({"messages": [HumanMessage(content="Es Lenovo") ]}, config)
+    assert second["current_agent"] == "ventas"
+    assert second["turn_start_index"] == len(first["messages"])
+    assert second["handoff_count"] == 1
+    assert second["tool_iterations"] == {"tecnico": 1}
+    assert second["errors"] == []
+    assert len([m for m in second["messages"] if isinstance(m, HumanMessage)]) == 2
+    other = graph.invoke({"messages": [HumanMessage(content="Otro equipo")]},
+                         {"configurable": {"thread_id": "cliente-b"}})
+    assert other["current_agent"] == "tecnico"
+    assert len([m for m in other["messages"] if isinstance(m, HumanMessage)]) == 1
+
+
+def test_fabrica_de_api_utiliza_checkpointer(graph_module, monkeypatch):
+    # Ejecuta la fábrica real sin cargar FastAPI ni el resto de los patrones.
+    factory = isolated_function("app/main.py", "_build_decentralized_graph", {"Any": object})
+    monkeypatch.setitem(sys.modules, "app.agents.decentralized.graph", graph_module)
+    graph = factory()
+    assert graph.checkpointer is not None
+    result = graph.invoke({"messages": [HumanMessage(content="Mi PC no enciende")]},
+                          {"configurable": {"thread_id": "api-test"}})
+    assert result["current_agent"] == "tecnico"
 
 
 def test_continua_tecnico_y_luego_ventas_sin_reiniciar_soporte(graph):

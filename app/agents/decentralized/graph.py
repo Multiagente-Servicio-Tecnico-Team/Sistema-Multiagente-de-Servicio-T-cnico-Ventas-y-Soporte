@@ -1,7 +1,6 @@
 import json
 
-from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 
@@ -339,63 +338,93 @@ def route_next_agent(state: AgentState):
     return state.get("next_agent") or "finalizar"
 
 
-builder = StateGraph(AgentState)
-for name, node in (
-    ("soporte", soporte_node),
-    ("tecnico", tecnico_node),
-    ("ventas", ventas_node),
-    ("almacen", almacen_node),
-):
-    builder.add_node(name, node)
-
-for name, tools in (
-    ("soporte", soporte_tools),
-    ("tecnico", tecnico_tools),
-    ("ventas", ventas_tools),
-    ("almacen", almacen_tools),
-):
-    builder.add_node(f"{name}_tools", ToolNode(tools, handle_tool_errors=True))
-
-builder.add_node("guardar_inventario", guardar_inventario)
-builder.add_node("auditar_soporte", auditar_soporte)
-builder.add_node("auditar_tecnico", auditar_tecnico)
-builder.add_node("auditar_ventas", auditar_ventas)
-builder.add_node("auditar_almacen", auditar_almacen)
-
 def route_entry(state: AgentState):
     """Retoma al agente activo; las conversaciones nuevas empiezan en Soporte."""
     agente = state.get("current_agent", "soporte")
     return agente if agente in {"soporte", "tecnico", "almacen", "ventas"} else "soporte"
 
 
-builder.add_conditional_edges(START, route_entry, {
-    "soporte": "soporte", "tecnico": "tecnico",
-    "almacen": "almacen", "ventas": "ventas",
-})
-for agente in ("soporte", "tecnico", "almacen", "ventas"):
-    builder.add_conditional_edges(
-        agente,
-        tools_condition,
-        {"tools": f"{agente}_tools", "__end__": END},
+def preparar_turno(state: AgentState):
+    """Reinicia controles tras recuperar el historial, sin borrar datos de negocio."""
+    messages = state.get("messages", [])
+    inicio = next(
+        (i for i in range(len(messages) - 1, -1, -1)
+         if isinstance(messages[i], HumanMessage)),
+        state.get("turn_start_index", 0),
     )
+    return {
+        "turn_start_index": inicio,
+        "handoff_count": 0,
+        "handoff_history": [],
+        "tool_iterations": {},
+        "errors": [],
+        "next_agent": None,
+    }
 
-builder.add_edge("soporte_tools", "auditar_soporte")
-builder.add_edge("tecnico_tools", "auditar_tecnico")
-builder.add_edge("ventas_tools", "auditar_ventas")
-builder.add_edge("almacen_tools", "guardar_inventario")
-builder.add_edge("guardar_inventario", "auditar_almacen")
 
-rutas = {
-    "soporte": "soporte",
-    "tecnico": "tecnico",
-    "almacen": "almacen",
-    "ventas": "ventas",
-    "finalizar": END,
-}
-for auditor in (
-    "auditar_soporte", "auditar_tecnico",
-    "auditar_almacen", "auditar_ventas",
-):
-    builder.add_conditional_edges(auditor, route_next_agent, rutas)
+def build_graph(checkpointer=None):
+    """Construye la misma red; el consumidor puede aportar su checkpointer.
 
-graph = build_graph(checkpointer=MemorySaver())
+    Sin checkpointer admite invoke(state) y el historial gestionado por Conversation.
+    La API aporta MemorySaver y thread_id para conservar conversaciones.
+    """
+    builder = StateGraph(AgentState)
+    for name, node in (
+        ("soporte", soporte_node),
+        ("tecnico", tecnico_node),
+        ("ventas", ventas_node),
+        ("almacen", almacen_node),
+    ):
+        builder.add_node(name, node)
+
+    for name, tools in (
+        ("soporte", soporte_tools),
+        ("tecnico", tecnico_tools),
+        ("ventas", ventas_tools),
+        ("almacen", almacen_tools),
+    ):
+        builder.add_node(f"{name}_tools", ToolNode(tools, handle_tool_errors=True))
+
+    builder.add_node("guardar_inventario", guardar_inventario)
+    builder.add_node("auditar_soporte", auditar_soporte)
+    builder.add_node("auditar_tecnico", auditar_tecnico)
+    builder.add_node("auditar_ventas", auditar_ventas)
+    builder.add_node("auditar_almacen", auditar_almacen)
+
+    builder.add_node("preparar_turno", preparar_turno)
+    builder.add_edge(START, "preparar_turno")
+    builder.add_conditional_edges("preparar_turno", route_entry, {
+        "soporte": "soporte", "tecnico": "tecnico",
+        "almacen": "almacen", "ventas": "ventas",
+    })
+    for agente in ("soporte", "tecnico", "almacen", "ventas"):
+        builder.add_conditional_edges(
+            agente,
+            tools_condition,
+            {"tools": f"{agente}_tools", "__end__": END},
+        )
+
+    builder.add_edge("soporte_tools", "auditar_soporte")
+    builder.add_edge("tecnico_tools", "auditar_tecnico")
+    builder.add_edge("ventas_tools", "auditar_ventas")
+    builder.add_edge("almacen_tools", "guardar_inventario")
+    builder.add_edge("guardar_inventario", "auditar_almacen")
+
+    rutas = {
+        "soporte": "soporte",
+        "tecnico": "tecnico",
+        "almacen": "almacen",
+        "ventas": "ventas",
+        "finalizar": END,
+    }
+    for auditor in (
+        "auditar_soporte", "auditar_tecnico",
+        "auditar_almacen", "auditar_ventas",
+    ):
+        builder.add_conditional_edges(auditor, route_next_agent, rutas)
+
+    return builder.compile(checkpointer=checkpointer)
+
+
+# Compatible con scripts y Conversation que invocan sin thread_id.
+graph = build_graph()
