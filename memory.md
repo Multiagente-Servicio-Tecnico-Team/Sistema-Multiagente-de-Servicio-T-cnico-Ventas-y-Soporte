@@ -1,6 +1,7 @@
 # Memoria del proyecto
 
 - Configuración local del frontend (2026-10-07): originalmente las APIs se configuraron en los puertos 8000 y 8001. El bloque de API unificada reemplazó esa configuración por `VITE_API_URL=http://localhost:8000/auth` y `VITE_CHAT_URL=http://localhost:8000`; `landing/.env` continúa ignorado por Git.
+- Proxy para Netlify (2026-10-07): se agregó `landing/public/_redirects` para proxy `/backend/*` al backend unificado Render y fallback SPA. Las variables de Netlify deben ser `VITE_API_URL=/backend/auth` y `VITE_CHAT_URL=/backend`, y el sitio debe reconstruirse. Evidencia: `docs/10-proxy-netlify.md`. Pendiente comprobar las cookies desde el dominio Netlify en un deploy real.
 - Base inicial: Python, correo SMTP y conexión SQLAlchemy; sin API ni portal.
 - Se conservan los servicios existentes. El nuevo flujo no depende de ellos.
 - Orden acordado: ventas → trazabilidad → chat → validación y compilación final.
