@@ -33,12 +33,26 @@ landing/
 │   │   ├── staff/           # StaffLogin, Workshop, TicketDetail, NewTicket, Inventory, PartForm
 │   │   ├── Help.jsx         # Soporte, preguntas frecuentes, estado y legales
 │   │   └── NotFound.jsx
-│   ├── styles.css           # Estilos de la landing
-│   └── app.css              # Estilos de las pantallas de la aplicación
+│   ├── styles/              # Estilos generales, se cargan primero
+│   │   ├── index.css        # Importa tokens, base y componentes
+│   │   ├── tokens.css       # Variables: colores, radios, sombras, tipografías y anillo de foco
+│   │   ├── base.css         # Reset, documento, foco y animaciones compartidas
+│   │   └── components.css   # Botones, etiquetas, íconos, logo, enlaces, avisos y formularios
+│   ├── styles.css           # Estilos propios de la landing
+│   └── app.css              # Estilos propios del portal, el taller y el acceso
 ├── tests/                   # Pruebas Vitest (contrato de API y pantallas de autenticación)
 ├── .env.example             # VITE_API_URL
 └── vite.config.js           # Configuración de Vite y de Vitest
 ```
+
+## Estilos
+
+- Una pieza que usan varias pantallas (botón, etiqueta, campo de formulario, aviso…) va en
+  `src/styles/components.css`; lo propio de una sola pantalla va en `styles.css` (landing) o `app.css`.
+- Los colores, radios y sombras se toman de `src/styles/tokens.css` con `var(--…)`; si un valor se repite,
+  se agrega un token en lugar de escribirlo a mano.
+- El orden de carga (`main.jsx`) es `styles/index.css`, `styles.css` y `app.css`: los estilos de pantalla
+  pueden ajustar a los generales sin subir la especificidad.
 
 ## Funcionalidad
 
