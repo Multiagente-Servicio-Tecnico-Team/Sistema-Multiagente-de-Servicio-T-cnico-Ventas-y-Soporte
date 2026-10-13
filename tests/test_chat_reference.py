@@ -44,19 +44,19 @@ def tickets(factory):
         return db.scalars(select(Ticket)).all()
 
 
-def test_sin_sesion_401(env):
+def test_without_session_401(env):
     _, app, _ = env
     res = TestClient(app).post("/api/chat", json={"message": PROBLEM})
     assert res.status_code == 401 and res.json()["code"] == "session_required"
 
 
-def test_tecnico_403(env):
+def test_technician_403(env):
     accounts, app, _ = env
     res = chat_client(accounts, app, "tecnico@taller.com").post("/api/chat", json={"message": PROBLEM})
     assert res.status_code == 403
 
 
-def test_pide_detalles_si_el_mensaje_es_corto(env):
+def test_asks_for_details_when_message_is_short(env):
     accounts, app, factory = env
     res = chat_client(accounts, app, "ana@demo.pe").post("/api/chat", json={"message": "hola"})
     body = res.json()
@@ -64,7 +64,7 @@ def test_pide_detalles_si_el_mensaje_es_corto(env):
     assert "quote" not in body and tickets(factory) == []
 
 
-def test_presupuesto_y_ticket_del_cliente_de_la_sesion(env):
+def test_quote_and_ticket_belong_to_session_customer(env):
     accounts, app, factory = env
     client = chat_client(accounts, app, "ana@demo.pe")
     # Un correo o customer_id en el cuerpo no cambia al cliente identificado.
@@ -79,7 +79,7 @@ def test_presupuesto_y_ticket_del_cliente_de_la_sesion(env):
     assert ticket.customer_id == 1 and ticket.failure_description == PROBLEM
 
 
-def test_aceptar_y_rechazar(env):
+def test_accept_and_reject(env):
     accounts, app, factory = env
     client = chat_client(accounts, app, "ana@demo.pe")
     conv = client.post("/api/chat", json={"message": PROBLEM}).json()["conversation_id"]
@@ -95,14 +95,14 @@ def test_aceptar_y_rechazar(env):
     assert rejected["quote"]["status"] == "rejected" and rejected["ticket"]["status"] == "CANCELLED"
 
 
-def test_conversacion_de_otro_cliente_404(env):
+def test_other_customer_conversation_404(env):
     accounts, app, _ = env
     conv = chat_client(accounts, app, "ana@demo.pe").post("/api/chat", json={"message": PROBLEM}).json()["conversation_id"]
     res = chat_client(accounts, app, "luis@demo.pe").post("/api/chat", json={"conversation_id": conv, "action": "accept_quote"})
     assert res.status_code == 404
 
 
-def test_cuerpo_invalido_no_repite_el_mensaje(env):
+def test_invalid_body_does_not_echo_message(env):
     accounts, app, _ = env
     client = chat_client(accounts, app, "ana@demo.pe")
     assert client.post("/api/chat", json={"message": "   "}).status_code == 422
@@ -110,7 +110,7 @@ def test_cuerpo_invalido_no_repite_el_mensaje(env):
     assert res.status_code == 422 and "x" * 50 not in res.text
 
 
-def test_limite_de_mensajes(env):
+def test_message_limit(env):
     accounts, app, _ = env
     client = chat_client(accounts, app, "ana@demo.pe")
     for _ in range(20):

@@ -7,6 +7,7 @@
  * Reglas: la contraseña solo viaja en el cuerpo de la petición (HTTPS en producción); el hash
  * lo genera el backend. El frontend nunca guarda contraseñas ni tokens: la sesión del servidor
  * debe viajar en una cookie HttpOnly (por eso credentials: "include").
+ * Las claves JSON (nombre, apellido, telefono, usuario, rol) son el contrato del backend.
  */
 import { resolveApiBaseUrl } from "./baseUrl.js";
 
@@ -40,20 +41,20 @@ export function toE164(prefix, phone) {
   return `${prefix}${String(phone).replace(/\D/g, "")}`;
 }
 
-/** "Martín Gómez Ruiz" -> { nombre: "Martín", apellido: "Gómez Ruiz" } (columnas name y last_name). */
+/** "Martín Gómez Ruiz" -> { firstName: "Martín", lastName: "Gómez Ruiz" } (columnas name y last_name). */
 export function splitFullName(full) {
   const clean = String(full).trim().split(/\s+/).filter(Boolean);
-  return { nombre: clean[0] || "", apellido: clean.slice(1).join(" ") || undefined };
+  return { firstName: clean[0] || "", lastName: clean.slice(1).join(" ") || undefined };
 }
 
-export function fullName(usuario) {
-  return [usuario?.nombre, usuario?.apellido].filter(Boolean).join(" ");
+export function fullName(user) {
+  return [user?.nombre, user?.apellido].filter(Boolean).join(" ");
 }
 
 /** Rol de la tabla users -> área del frontend. Sin rol (modo demostración) se usa el área de la pantalla. */
-export function areaForRole(rol, fallback) {
-  if (rol === "CUSTOMER") return "client";
-  if (rol === "TECHNICIAN" || rol === "ADMIN") return "staff";
+export function areaForRole(role, fallback) {
+  if (role === "CUSTOMER") return "client";
+  if (role === "TECHNICIAN" || role === "ADMIN") return "staff";
   return fallback;
 }
 
@@ -105,8 +106,8 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
   if (base) {
     return {
       mode: "api",
-      async register({ nombre, apellido, email, telefono, password }) {
-        const body = { nombre: nombre.trim(), apellido: apellido?.trim() || undefined, email: normalizeEmail(email), telefono, password };
+      async register({ firstName, lastName, email, phone, password }) {
+        const body = { nombre: firstName.trim(), apellido: lastName?.trim() || undefined, email: normalizeEmail(email), telefono: phone, password };
         const data = await post("/registro", body);
         return data.usuario ?? { nombre: body.nombre, apellido: body.apellido ?? null, email: body.email };
       },
@@ -137,12 +138,12 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
   const registered = new Set(["registrado@techfix.ai"]);
   return {
     mode: "mock",
-    async register({ nombre, apellido, email }) {
+    async register({ firstName, lastName, email }) {
       await wait(delay);
       const mail = normalizeEmail(email);
       if (registered.has(mail)) throw new ApiError(MESSAGES.duplicateEmail, { status: 409, field: "email", code: "duplicate_email" });
       registered.add(mail);
-      return { nombre: nombre.trim(), apellido: apellido?.trim() || null, email: mail };
+      return { nombre: firstName.trim(), apellido: lastName?.trim() || null, email: mail };
     },
     async logout() {},
     async login({ email }) {

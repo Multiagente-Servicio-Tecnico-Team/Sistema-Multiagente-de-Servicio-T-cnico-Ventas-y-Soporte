@@ -31,13 +31,13 @@ def env():
     other = FastAPI()
     guard.install(other)
 
-    @other.get("/cliente")
-    def cliente(customer=Depends(guard.require_customer)):
-        return {"id": customer.id, "email": customer.email, "rol": customer.rol}
+    @other.get("/customer")
+    def customer_route(customer=Depends(guard.require_customer)):
+        return {"id": customer.id, "email": customer.email, "role": customer.role}
 
-    @other.get("/usuario")
-    def usuario(user=Depends(guard.require_user)):
-        return {"rol": user.rol}
+    @other.get("/user")
+    def user_route(user=Depends(guard.require_user)):
+        return {"role": user.role}
 
     return accounts, TestClient(other), factory
 
@@ -47,53 +47,53 @@ def login(accounts, email):
     return accounts.cookies.get("techfix_session")
 
 
-def test_cliente_con_sesion(env):
+def test_customer_with_session(env):
     accounts, other, _ = env
     other.cookies.set("techfix_session", login(accounts, "ana@demo.pe"))
-    assert other.get("/cliente").json() == {"id": 1, "email": "ana@demo.pe", "rol": "CUSTOMER"}
+    assert other.get("/customer").json() == {"id": 1, "email": "ana@demo.pe", "role": "CUSTOMER"}
 
 
-def test_sin_cookie_o_alterada(env):
+def test_missing_or_tampered_cookie(env):
     _, other, _ = env
-    res = other.get("/cliente")
+    res = other.get("/customer")
     assert res.status_code == 401 and res.json() == {"detail": "Inicia sesión para continuar.", "code": "session_required"}
     other.cookies.set("techfix_session", sign_session(1, "otro-secreto" * 4, 3600))
-    assert other.get("/cliente").status_code == 401
+    assert other.get("/customer").status_code == 401
 
 
-def test_cookie_vencida(env):
+def test_expired_cookie(env):
     _, other, _ = env
     other.cookies.set("techfix_session", sign_session(1, SETTINGS.auth_secret, -10))
-    assert other.get("/cliente").status_code == 401
+    assert other.get("/customer").status_code == 401
 
 
-def test_cuenta_inactiva(env):
+def test_inactive_account(env):
     accounts, other, factory = env
     other.cookies.set("techfix_session", login(accounts, "ana@demo.pe"))
     with factory() as db:
         db.execute(update(User).values(active=False))
         db.commit()
-    assert other.get("/cliente").status_code == 401
+    assert other.get("/customer").status_code == 401
 
 
-def test_contrasena_cambiada_invalida_la_sesion(env):
+def test_changed_password_invalidates_session(env):
     accounts, other, factory = env
     other.cookies.set("techfix_session", login(accounts, "ana@demo.pe"))
     with factory() as db:
         db.execute(update(User).where(User.email == "ana@demo.pe").values(password_hash=hash_password("Otra#Clave2026", 4)))
         db.commit()
-    assert other.get("/cliente").status_code == 401
+    assert other.get("/customer").status_code == 401
 
 
-def test_tecnico_no_es_cliente(env):
+def test_technician_is_not_customer(env):
     accounts, other, _ = env
     other.cookies.set("techfix_session", login(accounts, "tecnico@taller.com"))
-    res = other.get("/cliente")
+    res = other.get("/customer")
     assert res.status_code == 403 and res.json()["code"] == "customer_only"
-    assert other.get("/usuario").json() == {"rol": "TECHNICIAN"}
+    assert other.get("/user").json() == {"role": "TECHNICIAN"}
 
 
-def test_from_env_exige_auth_secret(monkeypatch):
+def test_from_env_requires_auth_secret(monkeypatch):
     monkeypatch.delenv("AUTH_SECRET", raising=False)
     monkeypatch.setattr("app.accounts.session.load_dotenv", lambda: None)
     with pytest.raises(RuntimeError, match="AUTH_SECRET"):

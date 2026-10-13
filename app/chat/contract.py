@@ -14,7 +14,7 @@ class ChatIn(BaseModel):
     pattern: Literal["hierarchical", "orchestrator", "decentralized"] = "hierarchical"
 
     @model_validator(mode="after")
-    def mensaje_o_accion(self) -> "ChatIn":
+    def require_message_or_action(self) -> "ChatIn":
         if self.message is not None:
             self.message = self.message.strip()
         if not self.action and not self.message:

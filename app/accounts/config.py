@@ -37,10 +37,10 @@ class Settings:
         secret = os.getenv("AUTH_SECRET", "")
         if not secret:
             # Solo para desarrollo: las sesiones se invalidan al reiniciar el servidor.
-            logger.warning("AUTH_SECRET no está definido; se usa un secreto temporal.")
+            logger.warning("AUTH_SECRET is not set; using a temporary secret.")
             secret = secrets.token_urlsafe(48)
         if len(secret) < 32:
-            raise RuntimeError("AUTH_SECRET debe tener al menos 32 caracteres.")
+            raise RuntimeError("AUTH_SECRET must be at least 32 characters long.")
         origins = tuple(o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",") if o.strip())
         rounds = int(os.getenv("BCRYPT_ROUNDS", "12"))
         database_url = os.getenv("DATABASE_URL")

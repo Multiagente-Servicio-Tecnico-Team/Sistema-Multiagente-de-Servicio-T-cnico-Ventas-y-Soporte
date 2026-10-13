@@ -43,10 +43,10 @@ export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api
 
     setLoading(true);
     try {
-      const usuario = await api.login({ email, password });
+      const user = await api.login({ email, password });
       setPassword("");
       // El rol lo decide el servidor (tabla users); la pantalla solo indica el área esperada.
-      const area = areaForRole(usuario.rol, role);
+      const area = areaForRole(user.rol, role);
       if (role === "staff" && area === "client") {
         // El servidor ya abrió sesión: se cierra en ambos lados para no dejar estados distintos.
         await api.logout?.();
@@ -55,7 +55,7 @@ export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api
         setLoading(false);
         return;
       }
-      login({ role: area, email: usuario.email, name: fullName(usuario) || usuario.email });
+      login({ role: area, email: user.email, name: fullName(user) || user.email });
       const target = area === role ? location.state?.from || defaultTo : "/taller";
       navigate(target, { replace: true });
     } catch (err) {

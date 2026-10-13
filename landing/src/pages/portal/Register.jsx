@@ -48,15 +48,15 @@ export default function Register({ api = defaultApi }) {
 
     setLoading(true);
     try {
-      const { nombre, apellido } = splitFullName(form.name);
-      const usuario = await api.register({
-        nombre,
-        apellido,
+      const { firstName, lastName } = splitFullName(form.name);
+      const user = await api.register({
+        firstName,
+        lastName,
         email: form.email,
-        telefono: toE164(form.prefix, form.phone),
+        phone: toE164(form.prefix, form.phone),
         password: form.password,
       });
-      login({ role: "client", email: usuario.email, name: fullName(usuario) || form.name.trim() });
+      login({ role: "client", email: user.email, name: fullName(user) || form.name.trim() });
       navigate("/portal/tickets", { replace: true });
     } catch (err) {
       const field = API_FIELDS[err?.field];
