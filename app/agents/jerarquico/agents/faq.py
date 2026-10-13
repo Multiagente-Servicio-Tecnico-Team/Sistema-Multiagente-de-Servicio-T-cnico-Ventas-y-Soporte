@@ -23,11 +23,12 @@ _FAQ_TOPICS = {
     "servicios": {"servicio", "servicios", "funciones", "puedes", "hacer", "ayuda", "ayudar", "ofrecen"},
     "ubicacion": {"ubicacion", "direccion", "donde", "local", "tienda", "presencial", "retiro"},
     "horario": {"horario", "horarios", "abren", "abierto", "atienden", "atencion", "cuando"},
-    "pagos": {"pago", "pagos", "pagar", "medio", "medios", "transferencia", "tarjeta", "yape", "plin"},
+    "pagos": {"pago", "pagos", "pagar", "medio", "medios", "transferencia", "tarjeta", "yape", "plin", "efectivo", "visa", "mastercard"},
     "garantia": {"garantia", "garantias", "poliza", "reclamo", "cobertura", "vigencia"},
     "logistica": {"envio", "envios", "courier", "entrega", "recoger", "recepcion", "retiro", "presencial"},
     "compras": {"compra", "comprar", "catalogo", "stock", "disponibilidad", "disponible", "precio", "precios", "componente", "repuesto", "ram", "ssd", "gpu", "procesador", "tienen", "hay"},
     "cotizaciones": {"cotizacion", "cotizar", "presupuesto", "armado", "pc", "gamer", "gaming", "ram", "ssd"},
+    "proceso": {"proceso", "pasos", "funciona", "comprar", "compra", "cotizar", "cotizacion", "aceptar", "aceptacion", "ticket"},
 }
 _FAQ_TOPIC_HEADINGS = {
     "servicios": ("servicios disponibles",),
@@ -38,6 +39,7 @@ _FAQ_TOPIC_HEADINGS = {
     "logistica": ("retiro y envio",),
     "compras": ("compras y disponibilidad",),
     "cotizaciones": ("tarifas y cotizaciones", "servicios disponibles"),
+    "proceso": ("proceso de atención y compra",),
 }
 
 

@@ -1,15 +1,19 @@
-# Evidencia 17 - datos comerciales FAQ
+﻿# Evidencia 17 - datos comerciales y preguntas frecuentes
 
-Se añadió a `faq_servicio.md` la presencia de tienda y una ubicación/horario de
-demostración para Perú. Las preguntas de ubicación recuperan el párrafo con la
-dirección; las preguntas de horario recuperan la agenda de atención. El RAG
-mantiene un comentario HTML interno indicando que los datos son de demostración
-y deben reemplazarse antes de producción; ese preámbulo no se recupera como
-sección para la respuesta conversacional.
+La FAQ RAG cubre servicios, dirección y horario de tienda, tarifas base,
+formas de pago, pasos de compra/servicio, garantía y logística.
 
-El retiro presencial conserva su significado de preferencia logística, por lo
-que el asistente no declara recibido el equipo solo porque el cliente eligió
-esa modalidad. Los datos de pago siguen sin configurarse.
+- Tarifas base alineadas con `Settings`: diagnóstico S/ 50, mantenimiento S/ 35,
+  armado S/ 50 y venta directa sin mano de obra; el total de cotización se toma
+  del servidor si hay overrides.
+- Medios de pago de demostración: Yape, Plin, transferencia, Visa/Mastercard y
+  efectivo en tienda. El backend solo registra una orden PENDING, no procesa ni
+  confirma los medios; la FAQ no inventa cuentas o QR.
+- El proceso refleja aceptación explícita, logística pendiente y garantía de
+  tres meses que el flujo genera para venta/armado una vez registrado lo logístico.
+- Los datos comerciales se marcan en comentario HTML para reemplazo antes de
+  producción; el recuperador lexical excluye el preámbulo y entrega secciones.
 
-Validación: pruebas FAQ y workflows enfocadas; sin consultas ni escrituras a
-PostgreSQL. La dirección y horario son ficticios y no verifican un local real.
+Validación: 15 pruebas FAQ/workflows, compileall y `git diff --check` correctos;
+LangSmith desactivado. Sin escrituras a PostgreSQL. Dirección/horario/métodos de
+pago son valores ficticios para demostración.

@@ -94,3 +94,9 @@
   La FAQ los recupera para ubicación/horario; retiro no se confunde con recepción.
   14 pruebas FAQ/workflows, compileall y diff-check aprobados. Sin escrituras BD.
   Evidencia: spec 14 y docs 17.
+- FAQ comercial ampliada (2026-10-13): formas de pago ficticias (Yape, Plin,
+  transferencia, Visa/Mastercard y efectivo), proceso paso a paso, tarifas base
+  alineadas con settings y garantía de 3 meses para venta/armado tras logística.
+  El chat solo crea pago PENDING; no procesa pagos ni comparte cuentas/QR.
+  15 pruebas FAQ/workflows, compileall y diff-check correctos. Evidencia: spec 14,
+  docs 17. Valores de ubicación, horario y medios de pago son de demostración.

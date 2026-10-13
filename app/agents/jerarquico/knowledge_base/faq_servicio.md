@@ -1,4 +1,4 @@
-﻿# Preguntas frecuentes de atención
+# Preguntas frecuentes de atención
 
 <!-- Datos comerciales de demostración. Reemplazar por datos del negocio antes de producción. -->
 
@@ -20,15 +20,25 @@ Atendemos de lunes a viernes de 09:00 a 18:00 y los sábados de 09:00 a 13:00. D
 
 ## Tarifas y cotizaciones
 
-Los totales de reparación, diagnóstico y armado se calculan con los valores vigentes del servidor y el catálogo. Presenta el importe devuelto por la cotización, que incluye los componentes y la mano de obra aplicable. No prometas tarifas fijas, descuentos ni precios de productos recordados. La cotización se guarda solo después de que el cliente la acepta explícitamente.
+Tarifas de mano de obra: diagnóstico inicial S/ 50.00, mantenimiento o reparación con trabajo definido S/ 35.00, armado de PC S/ 50.00 y venta directa de componentes S/ 0.00 de mano de obra. Estos importes son tarifas base; el servidor puede tener ajustes de configuración. El importe final válido es el que aparece en la cotización, calculado con los precios vigentes del catálogo y la mano de obra aplicable. No prometas tarifas fijas, descuentos ni precios de productos recordados. La cotización se guarda solo después de que el cliente la acepta explícitamente.
 
 ## Pagos
 
-Después de aceptar una cotización, el sistema puede registrar una orden de pago pendiente. Pendiente significa que el pago no está confirmado. No afirmes que se recibió dinero, que se emitió un comprobante o que existe una reserva. Los medios de pago no están configurados. No asegures que se acepta tarjeta, Yape, Plin o transferencia ni solicites credenciales o datos sensibles.
+Aceptamos Yape, Plin, transferencia bancaria, tarjetas Visa/Mastercard y efectivo en tienda. Los datos de cuenta o QR se coordinan por los canales de atención al confirmar la compra; no los inventes ni solicites claves, códigos de seguridad, PIN ni credenciales. El chat no procesa ni confirma pagos: tras aceptar la cotización registra una orden en estado PENDIENTE. No afirmes que se recibió dinero, que se emitió comprobante o que hay una reserva hasta confirmación por el canal de pago.
+
+## Proceso de atención y compra
+
+1. Cuéntanos qué necesitas: soporte/reparación, un producto, una cotización o armar una PC; para una PC indica uso y presupuesto.
+2. El asistente consulta los datos disponibles. Para productos y armados verifica precio y stock actuales del catálogo, muestra opciones y permite elegir o cambiar componentes.
+3. Revisas la propuesta. Los cambios solicitados actualizan los componentes y el total antes de aceptar.
+4. Solo con tu aceptación explícita se guarda la cotización y se registra el pago como PENDIENTE. Aún no significa que el pago se haya recibido ni reserva inventario.
+5. Eliges retiro presencial o envío por courier y se registra tu preferencia. La recepción/entrega se confirma después. Para ventas y armados, al completar el registro logístico el sistema genera la póliza de 3 meses.
+
+En solicitudes de reparación/soporte, primero se registra el ticket; el técnico realiza una evaluación, puede pedir información o revisión física y después se presenta la cotización correspondiente. No se registra ni cobra una cotización rechazada.
 
 ## Garantía
 
-La vigencia individual se consulta usando el código exacto de la póliza vinculada a la cuenta del cliente. Se puede registrar un reclamo para evaluación. La cobertura final depende de la póliza y de la revisión del equipo; no prometas aprobación, reparación gratuita ni reembolso.
+Las ventas directas de productos y los armados de PC registrados por el flujo tienen una garantía de 3 meses. La garantía se crea al completar el registro logístico y queda vinculada a un código de póliza; la vigencia individual se consulta con el código exacto de la póliza en la cuenta del cliente. Para reparaciones o servicios, el alcance depende de la póliza asociada al caso. Se puede registrar un reclamo para evaluación. La cobertura final depende de la póliza y de la revisión del equipo; no prometas aprobación, reparación gratuita ni reembolso.
 
 ## Retiro y envío
 
