@@ -1,1 +1,1 @@
-"""Cuentas de usuario: registro e inicio de sesión sobre la tabla users."""
+"""User accounts: sign-up and sign-in on top of the users table."""
