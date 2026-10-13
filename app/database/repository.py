@@ -5,7 +5,7 @@ import re
 import unicodedata
 from uuid import uuid4
 
-from sqlalchemy import MetaData, Table, inspect, insert, select, update
+from sqlalchemy import MetaData, Table, bindparam, inspect, insert, select, update
 from sqlalchemy.engine import Connection, Engine
 
 from app.database.connection import get_engine
@@ -410,6 +410,74 @@ class ServiceRepository:
                 .first()
             )
         return dict(customer) if customer else None
+
+    def list_customer_tickets(self, customer_id: int) -> list[dict[str, Any]]:
+        """Return only this customer's tickets with their latest quote details."""
+        tickets_query = text(
+            """
+            SELECT t.id, t.code, t.title, t.failure_description,
+                   t.request_type::text AS request_type,
+                   t.status::text AS status, t.created_at, t.updated_at,
+                   q.id AS quote_id, q.status::text AS quote_status,
+                   q.labor_cost, q.parts_cost, q.total_amount,
+                   q.created_at AS quote_created_at
+            FROM tickets t
+            LEFT JOIN LATERAL (
+                SELECT id, status, labor_cost, parts_cost, total_amount, created_at
+                FROM quotes
+                WHERE ticket_id = t.id
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            ) q ON TRUE
+            WHERE t.customer_id = :customer_id
+            ORDER BY t.created_at DESC NULLS LAST, t.id DESC
+            """
+        )
+        details_query = text(
+            """
+            SELECT qd.quote_id, COALESCE(sp.name, qd.custom_item_name, 'Artículo') AS name,
+                   qd.quantity, qd.unit_price, qd.subtotal
+            FROM quote_details qd
+            LEFT JOIN spare_parts sp ON sp.id = qd.spare_part_id
+            WHERE qd.quote_id IN :quote_ids
+            ORDER BY qd.id
+            """
+        ).bindparams(bindparam("quote_ids", expanding=True))
+        with self._session_factory() as session:
+            rows = session.execute(
+                tickets_query, {"customer_id": customer_id}
+            ).mappings().all()
+            tickets = [dict(row) for row in rows]
+            quote_ids = [ticket["quote_id"] for ticket in tickets if ticket["quote_id"]]
+            details: dict[int, list[dict[str, Any]]] = {}
+            if quote_ids:
+                for row in session.execute(
+                    details_query, {"quote_ids": quote_ids}
+                ).mappings():
+                    item = dict(row)
+                    details.setdefault(int(item.pop("quote_id")), []).append(item)
+
+        for ticket in tickets:
+            quote_id = ticket.pop("quote_id")
+            ticket["quote"] = (
+                {
+                    "status": ticket.pop("quote_status"),
+                    "labor_cost": ticket.pop("labor_cost"),
+                    "parts_cost": ticket.pop("parts_cost"),
+                    "total_amount": ticket.pop("total_amount"),
+                    "created_at": ticket.pop("quote_created_at"),
+                    "lines": details.get(int(quote_id), []),
+                }
+                if quote_id
+                else None
+            )
+            if not quote_id:
+                for field in (
+                    "quote_status", "labor_cost", "parts_cost",
+                    "total_amount", "quote_created_at",
+                ):
+                    ticket.pop(field, None)
+        return tickets
 
     def create_intake_ticket(
         self,

@@ -88,3 +88,21 @@
   avería por una bienvenida que resume soporte, compras/cotizaciones, armado,
   garantías y logística; actualizado React, Streamlit y chat estático. No se
   ejecutaron pruebas por ser un cambio de texto/UI.
+- Actualización de FAQ de tienda (2026-10-13): a solicitud del usuario se
+  añadieron dirección ficticia en San Borja y horario peruano al RAG, marcados
+  internamente como datos de demostración para sustituir antes de producción.
+  La FAQ los recupera para ubicación/horario; retiro no se confunde con recepción.
+  14 pruebas FAQ/workflows, compileall y diff-check aprobados. Sin escrituras BD.
+  Evidencia: spec 14 y docs 17.
+- FAQ comercial ampliada (2026-10-13): formas de pago ficticias (Yape, Plin,
+  transferencia, Visa/Mastercard y efectivo), proceso paso a paso, tarifas base
+  alineadas con settings y garantía de 3 meses para venta/armado tras logística.
+  El chat solo crea pago PENDING; no procesa pagos ni comparte cuentas/QR.
+  15 pruebas FAQ/workflows, compileall y diff-check correctos. Evidencia: spec 14,
+  docs 17. Valores de ubicación, horario y medios de pago son de demostración.
+- Mis Tickets para cliente (2026-10-13): portal carga desde `/api/customer/tickets`
+  autenticado; API filtra estrictamente por customer_id de sesión y devuelve estado,
+  datos y última cotización. UI conserva tarjetas/filtros/búsqueda y elimina aprobar/
+  revisar/admin para ser solo lectura. Build Vite aprobado. Sin consultas ni escrituras
+  PostgreSQL. Evidencia: spec 15, docs 18.
+- Seed de inventario (2026-10-13): precios de referencia en PEN ajustados con cat?logos peruanos; RAM y almacenamiento compactados para retirar filas redundantes y SKU duplicados entre bloques. Filas: 438 ? 310; 310 c?digos ?nicos y sin duplicados exactos de nombre/categor?a. Limitaci?n: ambos `ON CONFLICT (code) DO NOTHING` no actualizan cat?logo ya sembrado; no se ejecut? SQL ni se toc? PostgreSQL. Evidencia: spec 16, docs 19.
