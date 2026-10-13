@@ -46,7 +46,14 @@ class ChatState(TypedDict, total=False):
 def atencion(state: ChatState) -> dict:
     """Agente de atención: pide más datos si el mensaje no describe equipo y síntoma."""
     if len(state["message"].split()) < 4:
-        return {"reply": f"Hola {state['nombre']}. Cuéntame qué equipo tienes (marca y modelo) y qué falla presenta."}
+        return {
+            "reply": (
+                f"Hola {state['nombre']}. Soy TechFix Copilot. Puedo orientarte con "
+                "soporte y reparaciones, consultar componentes y cotizaciones, "
+                "ayudarte a armar una PC según tu presupuesto y responder consultas "
+                "de garantía o logística. ¿Qué necesitas hoy?"
+            )
+        }
     return {}
 
 

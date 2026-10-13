@@ -26,7 +26,15 @@ class FakeResult:
     def first(self):
         return self.row
 
+    def one(self):
+        return self.row
+
     def scalar_one(self):
+        if self.error:
+            raise self.error
+        return self.scalar
+
+    def scalar_one_or_none(self):
         if self.error:
             raise self.error
         return self.scalar
@@ -144,6 +152,28 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("name ILIKE :pattern", query)
         self.assertEqual(parameters, {"pattern": "%SSD%"})
 
+    def test_ram_alternatives_are_scoped_to_memory_categories(self):
+        session = FakeSession([FakeResult(rows=[])])
+        repository = ServiceRepository(lambda: session)
+
+        repository.find_spare_part_alternatives("RAM_16GB")
+
+        query, parameters = session.calls[0]
+        self.assertIn("category ILIKE 'RAM%'", query)
+        self.assertIn("name ILIKE 'Memoria RAM%'", query)
+        self.assertNotIn("name ILIKE '%RAM%'", query)
+        self.assertEqual(parameters, {"pattern": "%RAM%"})
+
+    def test_battery_alternatives_exclude_cmos_and_rtc_cells(self):
+        session = FakeSession([FakeResult(rows=[])])
+        repository = ServiceRepository(lambda: session)
+
+        repository.find_spare_part_alternatives("REP-BAT-L2023")
+
+        query, _ = session.calls[0]
+        self.assertIn("name NOT ILIKE '%RTC%'", query)
+        self.assertIn("name NOT ILIKE '%CMOS%'", query)
+
     def test_ticket_insert_uses_parameters_and_starts_in_diagnosis(self):
         session = FakeSession([FakeResult(scalar=55)])
         repository = ServiceRepository(lambda: session)
@@ -162,6 +192,102 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("IN_DIAGNOSIS", query)
         self.assertIn(":failure_description", query)
         self.assertEqual(parameters["customer_id"], 9)
+        self.assertTrue(session.transaction.committed)
+
+    def test_service_intake_ticket_starts_new(self):
+        session = FakeSession([FakeResult(scalar=55)])
+        repository = ServiceRepository(lambda: session)
+
+        ticket_id = repository.create_intake_ticket(
+            code="TCK-123456789ABC",
+            customer_id=9,
+            title="Laptop falla",
+            failure_description="Se apaga.",
+            request_type="REPAIR",
+        )
+
+        query, parameters = session.calls[0]
+        self.assertEqual(ticket_id, 55)
+        self.assertIn("CAST('NEW' AS ticket_status_enum)", query)
+        self.assertEqual(parameters["request_type"], "REPAIR")
+        self.assertTrue(session.transaction.committed)
+
+    def test_service_diagnosis_updates_existing_ticket_columns(self):
+        session = FakeSession([FakeResult(scalar=55)])
+        repository = ServiceRepository(lambda: session)
+
+        repository.update_ticket_diagnosis(
+            ticket_id=55,
+            customer_id=9,
+            diagnosis="Posible falla de ventilación.",
+            diagnosis_type="HARDWARE",
+        )
+
+        query, parameters = session.calls[0]
+        self.assertIn("UPDATE tickets", query)
+        self.assertIn("hardware_diagnosis = :hardware_diagnosis", query)
+        self.assertIn("software_diagnosis = :software_diagnosis", query)
+        self.assertIn("CAST('IN_DIAGNOSIS' AS ticket_status_enum)", query)
+        self.assertEqual(parameters["hardware_diagnosis"], "Posible falla de ventilación.")
+        self.assertIsNone(parameters["software_diagnosis"])
+        self.assertEqual(parameters["ticket_id"], 55)
+        self.assertEqual(parameters["customer_id"], 9)
+        self.assertTrue(session.transaction.committed)
+
+    def test_software_service_diagnosis_uses_software_column(self):
+        session = FakeSession([FakeResult(scalar=55)])
+        repository = ServiceRepository(lambda: session)
+
+        repository.update_ticket_diagnosis(
+            ticket_id=55,
+            customer_id=9,
+            diagnosis="Posible incompatibilidad de software.",
+            diagnosis_type="SOFTWARE",
+        )
+
+        parameters = session.calls[0][1]
+        self.assertIsNone(parameters["hardware_diagnosis"])
+        self.assertEqual(
+            parameters["software_diagnosis"],
+            "Posible incompatibilidad de software.",
+        )
+
+    def test_accepted_repair_quote_creates_pending_payment_atomically(self):
+        session = FakeSession(
+            [
+                FakeResult(),
+                FakeResult(scalar=77),
+                FakeResult(
+                    row={
+                        "id": 88,
+                        "payment_code": "PAY-TEST",
+                        "amount": Decimal("50.00"),
+                        "status": "PENDING",
+                    }
+                ),
+                FakeResult(rowcount=1),
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        result = repository.accept_ticket_quote(
+            ticket_id=55,
+            customer_id=9,
+            quote_type="REPAIR",
+            labor_cost=Decimal("50.00"),
+            parts_cost=Decimal("0.00"),
+            total_amount=Decimal("50.00"),
+            observations="Cotización aceptada.",
+            parts=[],
+            payment_code="PAY-TEST",
+        )
+
+        self.assertEqual(result["quote_id"], 77)
+        self.assertEqual(result["payment_id"], 88)
+        self.assertEqual(result["payment_code"], "PAY-TEST")
+        self.assertIn("ACCEPTED", session.calls[1][0])
+        self.assertIn("PENDING", session.calls[2][0])
+        self.assertIn("PAYMENT_PENDING", session.calls[3][0])
         self.assertTrue(session.transaction.committed)
 
     def test_quote_and_ticket_update_share_one_transaction(self):
@@ -250,10 +376,104 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual((ticket_id, quote_id), (55, 77))
         self.assertEqual(len(session.calls), 4)
         self.assertIn("IN_DIAGNOSIS", session.calls[0][0])
+        self.assertIn("hardware_diagnosis", session.calls[0][0])
+        self.assertIn("software_diagnosis", session.calls[0][0])
+        self.assertNotIn("provisional_diagnosis", session.calls[0][0])
+        self.assertEqual(session.calls[0][1]["hardware_diagnosis"], "Unidad lenta.")
+        self.assertIsNone(session.calls[0][1]["software_diagnosis"])
         self.assertIn("quotes", session.calls[1][0])
         self.assertIn("QUOTED", session.calls[2][0])
         self.assertIn("quote_details", session.calls[3][0])
         self.assertTrue(session.transaction.committed)
+
+    def test_software_diagnosis_uses_software_ticket_column(self):
+        session = FakeSession(
+            [
+                FakeResult(scalar=55),
+                FakeResult(scalar=77),
+                FakeResult(rowcount=1),
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        repository.create_ticket_with_quote(
+            ticket_code="ST-123456789ABC",
+            customer_id=9,
+            title="Error de sistema",
+            failure_description="La aplicación se cierra.",
+            request_type="SUPPORT",
+            provisional_diagnosis="Posible incompatibilidad.",
+            labor_cost=Decimal("50.00"),
+            parts_cost=Decimal("0.00"),
+            total_amount=Decimal("50.00"),
+            observations="Tipo de mano de obra: diagnosis",
+            parts=[],
+            diagnosis_type="SOFTWARE",
+        )
+
+        ticket_parameters = session.calls[0][1]
+        self.assertIsNone(ticket_parameters["hardware_diagnosis"])
+        self.assertEqual(
+            ticket_parameters["software_diagnosis"],
+            "Posible incompatibilidad.",
+        )
+
+    def test_logistics_preference_is_updated_while_receipt_is_pending(self):
+        session = FakeSession(
+            [
+                FakeResult(
+                    row={
+                        "id": 81,
+                        "mode": "PHYSICAL_STORE",
+                        "status": "PENDING_RECEIPT",
+                        "courier_company": None,
+                        "shipping_address": None,
+                    }
+                ),
+                FakeResult(scalar=81),
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        record_id = repository.create_logistics_record(
+            ticket_id=55,
+            customer_id=9,
+            mode="COURIER_SHIPMENT",
+            courier_company="Courier de prueba",
+            shipping_address="Dirección de prueba",
+        )
+
+        self.assertEqual(record_id, 81)
+        self.assertIn("UPDATE logistics_records", session.calls[1][0])
+        self.assertTrue(session.transaction.committed)
+
+    def test_logistics_preference_cannot_change_after_receipt(self):
+        session = FakeSession(
+            [
+                FakeResult(
+                    row={
+                        "id": 81,
+                        "mode": "PHYSICAL_STORE",
+                        "status": "RECEIVED_AT_WORKSHOP",
+                        "courier_company": None,
+                        "shipping_address": None,
+                    }
+                )
+            ]
+        )
+        repository = ServiceRepository(lambda: session)
+
+        with self.assertRaisesRegex(ValueError, "después de la recepción"):
+            repository.create_logistics_record(
+                ticket_id=55,
+                customer_id=9,
+                mode="COURIER_SHIPMENT",
+                courier_company="Courier de prueba",
+                shipping_address="Dirección de prueba",
+            )
+
+        self.assertEqual(len(session.calls), 1)
+        self.assertTrue(session.transaction.rolled_back)
 
     def test_diagnostic_quote_can_be_saved_without_spare_part_details(self):
         session = FakeSession(

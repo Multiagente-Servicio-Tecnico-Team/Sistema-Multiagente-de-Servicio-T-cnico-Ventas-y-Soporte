@@ -1,6 +1,7 @@
 """Authenticated chat API for selecting and tracing the LangGraph patterns."""
 
 import logging
+import re
 from contextlib import AbstractContextManager, nullcontext
 from threading import Lock, RLock
 from typing import Any, Callable
@@ -111,16 +112,22 @@ def _quote_for_result(pattern: str, result: dict[str, Any]) -> QuoteOut | None:
         if result.get("outcome") == "awaiting_confirmation":
             status = "proposed"
         elif result.get("outcome") == "quoted":
-            status = "saved"
+            status = (
+                "confirmed"
+                if result.get("ticket_status") == "PAYMENT_PENDING"
+                else "saved"
+            )
         elif result.get("outcome") == "declined":
             status = "rejected"
         if quote and status:
             task_type = quote.get("labor_task_type", "maintenance")
-            labor_name = (
-                "Diagnóstico técnico"
-                if task_type == "diagnosis"
-                else "Mano de obra"
-            )
+            labor_name = "Mano de obra"
+            if quote.get("quote_type", result.get("quote_type")) == "DIRECT_SALE":
+                labor_name = "Mano de obra (venta directa)"
+            elif task_type == "diagnosis":
+                labor_name = "Diagnóstico técnico"
+            elif task_type == "pc_build":
+                labor_name = "Ensamble"
             lines.append(
                 QuoteLine(
                     label=labor_name,
@@ -194,7 +201,10 @@ def _reply_for_result(pattern: str, result: dict[str, Any]) -> str:
 
 
 def _ticket_for_result(pattern: str, result: dict[str, Any]) -> TicketOut | None:
-    if pattern == "hierarchical" and result.get("outcome") == "quoted":
+    if pattern == "hierarchical" and result.get("outcome") in {
+        "quoted",
+        "warranty_claim_registered",
+    }:
         code = result.get("ticket_code")
     elif pattern == "orchestrator" and result.get("quote_id") is not None:
         code = result.get("ticket_code")
@@ -202,7 +212,8 @@ def _ticket_for_result(pattern: str, result: dict[str, Any]) -> TicketOut | None
         return None
     if not isinstance(code, str) or not code:
         return None
-    return TicketOut(code=code, status="QUOTED")
+    status = result.get("ticket_status", "QUOTED")
+    return TicketOut(code=code, status=status)
 
 
 def create_app(
@@ -384,9 +395,19 @@ def create_app(
                     message,
                 )
             except (SQLAlchemyError, OSError) as exc:
+                origin = getattr(exc, "orig", None)
+                sqlstate = (
+                    getattr(origin, "sqlstate", None)
+                    or getattr(origin, "pgcode", None)
+                )
+                if not isinstance(sqlstate, str) or not re.fullmatch(
+                    r"[0-9A-Z]{5}", sqlstate
+                ):
+                    sqlstate = "unavailable"
                 logger.error(
-                    "Pattern database or storage operation failed: %s",
+                    "Pattern database or storage operation failed: %s; SQLSTATE=%s",
                     type(exc).__name__,
+                    sqlstate,
                 )
                 raise HTTPException(
                     status_code=503,

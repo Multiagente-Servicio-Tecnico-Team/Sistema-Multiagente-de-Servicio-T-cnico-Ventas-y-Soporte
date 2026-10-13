@@ -8,6 +8,7 @@
  * lo genera el backend. El frontend nunca guarda contraseñas ni tokens: la sesión del servidor
  * debe viajar en una cookie HttpOnly (por eso credentials: "include").
  */
+import { resolveApiBaseUrl } from "./baseUrl.js";
 
 export class ApiError extends Error {
   constructor(message, { status = 0, field = null, code = "error" } = {}) {
@@ -162,4 +163,10 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
   };
 }
 
-export const authApi = createAuthApi({ baseUrl: import.meta.env?.VITE_API_URL ?? "" });
+export const authApi = createAuthApi({
+  baseUrl: resolveApiBaseUrl(
+    import.meta.env?.VITE_API_URL ?? "",
+    "/backend/auth",
+    import.meta.env?.PROD === true,
+  ),
+});

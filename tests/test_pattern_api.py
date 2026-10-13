@@ -14,7 +14,7 @@ from app.accounts.config import Settings as AccountSettings
 from app.accounts.models import Base
 from app.accounts.session import SessionGuard
 from app.chat.contract import QuoteOut
-from app.main import PATTERN_NAMES, create_app
+from app.main import PATTERN_NAMES, _ticket_for_result, create_app
 from app.settings import Settings
 
 
@@ -25,6 +25,21 @@ ACCOUNT_SETTINGS = AccountSettings(
     secure_cookie=False,
     bcrypt_rounds=4,
 )
+
+
+def test_hierarchical_warranty_claim_returns_ticket_for_portal():
+    ticket = _ticket_for_result(
+        "hierarchical",
+        {
+            "outcome": "warranty_claim_registered",
+            "ticket_code": "TCK-ABC123",
+            "ticket_status": "WARRANTY_IN_REVIEW",
+        },
+    )
+
+    assert ticket is not None
+    assert ticket.code == "TCK-ABC123"
+    assert ticket.status == "WARRANTY_IN_REVIEW"
 
 
 class FakeGraph:

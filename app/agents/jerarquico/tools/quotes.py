@@ -8,11 +8,13 @@ def calculate_quote(
     labor_task_type: str,
     parts: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if labor_task_type not in {"maintenance", "diagnosis"}:
+    if labor_task_type not in {"maintenance", "diagnosis", "sale", "pc_build"}:
         raise ValueError(f"Tipo de mano de obra no reconocido: {labor_task_type}.")
     money = Decimal("0.01")
     labor_cost = Decimal(str(labor_cost))
-    if not labor_cost.is_finite() or labor_cost <= 0:
+    if not labor_cost.is_finite() or labor_cost < 0:
+        raise ValueError("La mano de obra debe ser un importe fijo no negativo.")
+    if labor_task_type != "sale" and labor_cost == 0:
         raise ValueError("La mano de obra debe tener un precio fijo positivo.")
     labor_cost = labor_cost.quantize(money, rounding=ROUND_HALF_UP)
     quote_parts = []

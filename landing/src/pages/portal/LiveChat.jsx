@@ -9,6 +9,10 @@ function now() {
   return new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
 }
 
+function welcomeMessage(firstName) {
+  return `Hola${firstName ? `, ${firstName}` : ""}. Soy TechFix Copilot. Puedo orientarte con soporte y reparaciones, consultar componentes y cotizaciones, ayudarte a armar una PC según tu presupuesto y resolver consultas de garantía o logística. ¿Qué necesitas hoy?`;
+}
+
 /** Importe del servidor ("180.00") mostrado sin cálculos en el navegador. */
 const money = (amount) => formatPEN(parseMoney(amount));
 const PATTERNS = [
@@ -29,7 +33,7 @@ function QuoteCard({ quote, busy, onAction }) {
       <div className="quote__head">
         <span className="icon-tile icon-tile--solid icon-tile--sm"><ReceiptText size={18} aria-hidden="true" /></span>
         <div>
-          <strong>Presupuesto de servicio técnico</strong>
+          <strong>Cotización</strong>
           <p className="mono-small">Calculado por el agente de ventas</p>
         </div>
       </div>
@@ -55,7 +59,7 @@ function QuoteCard({ quote, busy, onAction }) {
           </div>
         ) : (
           <p className={`ok-text${quote.status === "rejected" ? " muted" : ""}`}>
-            {{ saved: "Ticket y presupuesto guardados · pendiente de aceptación", confirmed: "Presupuesto aceptado · reparación autorizada", rejected: "Propuesta no guardada" }[quote.status]
+            {{ saved: "Ticket y presupuesto guardados · pendiente de aceptación", confirmed: "Cotización aceptada y registrada", rejected: "Propuesta no guardada" }[quote.status]
               || "Reemplazado por un presupuesto más reciente"}
           </p>
         )}
@@ -71,7 +75,7 @@ export default function LiveChat({ api = defaultChatApi }) {
   const firstName = (session?.name || "").split(" ")[0];
   const [messages, setMessages] = useState([{
     id: 0, from: "bot", time: now(),
-    text: `Hola${firstName ? `, ${firstName}` : ""}. Cuéntame qué equipo tienes y qué falla presenta.`,
+    text: welcomeMessage(firstName),
   }]);
   const [conversationId, setConversationId] = useState(null);
   const [pattern, setPattern] = useState("hierarchical");
@@ -122,7 +126,7 @@ export default function LiveChat({ api = defaultChatApi }) {
       id: Date.now(),
       from: "bot",
       time: now(),
-      text: `Hola${firstName ? `, ${firstName}` : ""}. Cuéntame qué equipo tienes y qué falla presenta.`,
+      text: welcomeMessage(firstName),
     }]);
     setError(null);
   };
