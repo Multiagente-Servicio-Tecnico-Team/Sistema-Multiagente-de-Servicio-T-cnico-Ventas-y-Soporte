@@ -100,3 +100,8 @@
   El chat solo crea pago PENDING; no procesa pagos ni comparte cuentas/QR.
   15 pruebas FAQ/workflows, compileall y diff-check correctos. Evidencia: spec 14,
   docs 17. Valores de ubicación, horario y medios de pago son de demostración.
+- Mis Tickets para cliente (2026-10-13): portal carga desde `/api/customer/tickets`
+  autenticado; API filtra estrictamente por customer_id de sesión y devuelve estado,
+  datos y última cotización. UI conserva tarjetas/filtros/búsqueda y elimina aprobar/
+  revisar/admin para ser solo lectura. Build Vite aprobado. Sin consultas ni escrituras
+  PostgreSQL. Evidencia: spec 15, docs 18.

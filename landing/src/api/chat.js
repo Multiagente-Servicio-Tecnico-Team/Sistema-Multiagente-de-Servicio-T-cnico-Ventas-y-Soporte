@@ -46,6 +46,27 @@ export function createChatApi({ baseUrl = "", fetchImpl } = {}) {
 
   return {
     mode: base ? "api" : "mock",
+    async listMyTickets() {
+      if (!base) return [];
+      let res;
+      try {
+        res = await doFetch(`${base}/api/customer/tickets`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          credentials: "include",
+        });
+      } catch {
+        throw new ChatError(CHAT_MESSAGES.unavailable, { code: "network" });
+      }
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) throw toChatError(res.status, data);
+      return Array.isArray(data?.tickets) ? data.tickets : [];
+    },
     async sendMessage({
       conversationId = null,
       message = null,

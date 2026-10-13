@@ -222,6 +222,7 @@ def create_app(
     graph_factories: dict[str, GraphFactory] | None = None,
     settings_factory: Callable[[], Settings] = load_settings,
     trace_context_factory: Callable[[], AbstractContextManager[None]] | None = None,
+    ticket_repository_factory: Callable[[], Any] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="TechFix.AI · Patrones LangGraph", version="1.1.0")
     account_settings = (
@@ -327,6 +328,64 @@ def create_app(
             "patterns": [
                 {"id": pattern_id, "name": name}
                 for pattern_id, name in PATTERN_NAMES.items()
+            ]
+        }
+
+    @app.get("/api/customer/tickets")
+    def customer_tickets(customer: SessionCustomer = Depends(require_customer)):
+        try:
+            if ticket_repository_factory is None:
+                from app.database.repository import ServiceRepository
+
+                repository = ServiceRepository()
+            else:
+                repository = ticket_repository_factory()
+            tickets = repository.list_customer_tickets(customer.id)
+        except (SQLAlchemyError, OSError, RuntimeError) as exc:
+            logger.error("Customer ticket listing failed: %s", type(exc).__name__)
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudieron cargar tus tickets en este momento.",
+            ) from exc
+
+        def date_text(value):
+            return value.isoformat() if hasattr(value, "isoformat") else value
+
+        def money_text(value):
+            return None if value is None else f"{value:.2f}"
+
+        return {
+            "tickets": [
+                {
+                    "code": ticket["code"],
+                    "title": ticket["title"],
+                    "failure_description": ticket["failure_description"],
+                    "request_type": ticket["request_type"],
+                    "status": ticket["status"],
+                    "created_at": date_text(ticket.get("created_at")),
+                    "updated_at": date_text(ticket.get("updated_at")),
+                    "quote": (
+                        {
+                            "status": ticket["quote"]["status"],
+                            "labor_cost": money_text(ticket["quote"]["labor_cost"]),
+                            "parts_cost": money_text(ticket["quote"]["parts_cost"]),
+                            "total_amount": money_text(ticket["quote"]["total_amount"]),
+                            "created_at": date_text(ticket["quote"]["created_at"]),
+                            "lines": [
+                                {
+                                    "name": line["name"],
+                                    "quantity": int(line["quantity"]),
+                                    "unit_price": money_text(line["unit_price"]),
+                                    "subtotal": money_text(line["subtotal"]),
+                                }
+                                for line in ticket["quote"]["lines"]
+                            ],
+                        }
+                        if ticket.get("quote")
+                        else None
+                    ),
+                }
+                for ticket in tickets
             ]
         }
 
