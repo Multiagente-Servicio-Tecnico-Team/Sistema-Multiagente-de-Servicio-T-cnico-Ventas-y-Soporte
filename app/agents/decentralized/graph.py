@@ -6,6 +6,9 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.policy import repuesto_confirmado
+from app.agents.decentralized.handoffs import (
+    HANDOFF_TOOLS, handoff_reason, validate_handoff, make_handoff_record, selected_handoff,
+)
 from app.agents.decentralized.soporte import soporte_node, soporte_tools
 from app.agents.decentralized.tecnico import tecnico_node, tecnico_tools
 from app.agents.decentralized.ventas import ventas_node, ventas_tools
@@ -14,40 +17,23 @@ from app.agents.decentralized.almacen import almacen_node, almacen_tools
 MAX_HANDOFFS = 5
 MAX_TOOL_ITERATIONS = 6
 
-HANDOFF_TOOLS = {
-    "solicitar_inventario": "almacen",
-    "transferir_a_soporte": "soporte",
-    "transferir_a_tecnico": "tecnico",
-    "transferir_a_ventas": "ventas",
-    "transferir_a_almacen": "almacen",
+AGENT_NODES = {
+    "soporte": soporte_node, "tecnico": tecnico_node,
+    "ventas": ventas_node, "almacen": almacen_node,
 }
 
 
 def detectar_handoff(messages):
-    """Identifica la última transferencia ejecutada correctamente."""
-    tool_messages = []
-    for message in reversed(messages):
-        if isinstance(message, ToolMessage):
-            tool_messages.append(message)
-        else:
-            break
-
-    for message in reversed(tool_messages):
-        if message.status == "error":
-            continue
-        destino = HANDOFF_TOOLS.get(message.name)
-        if destino:
-            return destino
-    return None
+    """Identifica la primera transferencia exitosa del lote final."""
+    result = selected_handoff(messages)
+    return HANDOFF_TOOLS[result.name] if result is not None else None
 
 
 def extraer_repuesto_handoff(messages):
     """Valida los datos estructurados de transferir_a_almacen."""
-    for mensaje in reversed(messages):
-        if not isinstance(mensaje, ToolMessage):
-            break
-        if mensaje.name != "transferir_a_almacen":
-            continue
+    for mensaje in [selected_handoff(messages)]:
+        if mensaje is None or mensaje.name != "transferir_a_almacen":
+            return None
         if mensaje.status == "error":
             return None
         try:
@@ -71,9 +57,24 @@ def extraer_repuesto_handoff(messages):
 def registrar_handoff(state: AgentState, origen: str):
     """Audita herramientas y transferencias entre agentes."""
     destino = detectar_handoff(state["messages"])
+    motivo = handoff_reason(state["messages"]) if destino else None
     # Almacén entrega datos verificados a Ventas en la misma ejecución.
-    if origen == "almacen" and destino is None and state.get("required_parts") and not state.get("inventory_pending", True):
-        destino = "ventas"
+    lote = []
+    for message in reversed(state["messages"]):
+        if not isinstance(message, ToolMessage):
+            break
+        lote.append(message)
+    inventario_actual = any(
+        message.name == "consultar_inventario" and message.status != "error"
+        and any(item.get("tool_call_id") == message.tool_call_id
+                for item in state.get("inventory_results", []))
+        for message in lote
+    )
+    if (origen == "almacen" and destino is None and inventario_actual
+            and not any(message.status == "error" or message.name in HANDOFF_TOOLS for message in lote)
+            and state.get("required_parts") and not state.get("inventory_pending", True)):
+        destino = state.get("inventory_requested_by") or "ventas"
+        motivo = "Entregar inventario verificado"
     historial = list(state.get("handoff_history", []))
     contador = state.get("handoff_count", 0)
     errores = list(state.get("errors", []))
@@ -95,23 +96,27 @@ def registrar_handoff(state: AgentState, origen: str):
     if destino is None:
         return {"next_agent": origen, "tool_iterations": iteraciones}
 
-    if origen == "ventas" and destino == "almacen":
-        for mensaje in reversed(state["messages"]):
-            if not isinstance(mensaje, ToolMessage):
-                break
-            if mensaje.name == "solicitar_inventario" and mensaje.status != "error":
-                try:
-                    datos = json.loads(mensaje.content)
-                except (ValueError, TypeError):
-                    datos = {}
-                if isinstance(datos, dict) and isinstance(datos.get("consulta"), str):
-                    if contador >= MAX_HANDOFFS:
-                        return {"next_agent": "finalizar", "tool_iterations": iteraciones,
-                                "messages": [AIMessage(content="Límite de transferencias alcanzado.")]}
-                    historial.append({"origen": "ventas", "destino": "almacen"})
-                    return {"next_agent": "almacen", "inventory_query": datos["consulta"],
-                            "handoff_count": contador + 1, "handoff_history": historial,
-                            "tool_iterations": iteraciones}
+    def rechazo(error):
+        return {"next_agent": "finalizar", "tool_iterations": iteraciones,
+                "errors": errores + [str(error)],
+                "messages": [AIMessage(content="No se pudo completar la transferencia.")]}
+
+    try:
+        validate_handoff(origen, destino, motivo, AGENT_NODES, state.get("request_revision"))
+    except ValueError as error:
+        return rechazo(error)
+
+    selected = selected_handoff(state["messages"])
+    datos = None
+    if selected is not None:
+        try:
+            datos = json.loads(selected.content)
+        except (ValueError, TypeError):
+            pass
+    consulta_inventario = None
+    if selected is not None and selected.name == "solicitar_inventario":
+        if isinstance(datos, dict) and isinstance(datos.get("consulta"), str):
+            consulta_inventario = datos["consulta"]
 
     if destino == origen:
         errores.append("Transferencia al mismo agente")
@@ -136,16 +141,6 @@ def registrar_handoff(state: AgentState, origen: str):
 
     repuesto_pendiente = None
     if origen == "tecnico" and destino == "ventas":
-        datos = None
-        for mensaje in reversed(state["messages"]):
-            if not isinstance(mensaje, ToolMessage):
-                break
-            if mensaje.name == "transferir_a_ventas" and mensaje.status != "error":
-                try:
-                    datos = json.loads(mensaje.content)
-                except (ValueError, TypeError):
-                    pass
-                break
         alcance = datos.get("alcance") if isinstance(datos, dict) else None
         if alcance == "repuestos":
             nombre = datos.get("nombre_repuesto")
@@ -204,13 +199,20 @@ def registrar_handoff(state: AgentState, origen: str):
             ))],
         }
 
+    try:
+        record = make_handoff_record(state, origen, destino, motivo, AGENT_NODES)
+    except ValueError as error:
+        return rechazo(error)
     historial.append({"origen": origen, "destino": destino})
     actualizacion = {
         "next_agent": destino,
         "handoff_count": contador + 1,
         "handoff_history": historial,
         "tool_iterations": iteraciones,
+        "handoff_records": [*state.get("handoff_records", []), record],
     }
+    if consulta_inventario is not None:
+        actualizacion["inventory_query"] = consulta_inventario
     if repuesto_pendiente is not None:
         repuestos = list(state.get("required_parts", []))
         if repuesto_pendiente not in repuestos:
@@ -356,6 +358,7 @@ def preparar_turno(state: AgentState):
         "turn_start_index": inicio,
         "handoff_count": 0,
         "handoff_history": [],
+        "handoff_records": [],
         "tool_iterations": {},
         "errors": [],
         "next_agent": None,
@@ -369,12 +372,7 @@ def build_graph(checkpointer=None):
     La API aporta MemorySaver y thread_id para conservar conversaciones.
     """
     builder = StateGraph(AgentState)
-    for name, node in (
-        ("soporte", soporte_node),
-        ("tecnico", tecnico_node),
-        ("ventas", ventas_node),
-        ("almacen", almacen_node),
-    ):
+    for name, node in AGENT_NODES.items():
         builder.add_node(name, node)
 
     for name, tools in (

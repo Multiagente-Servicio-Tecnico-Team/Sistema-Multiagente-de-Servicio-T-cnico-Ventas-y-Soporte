@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 from typing_extensions import TypedDict
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
+from app.agents.decentralized.handoffs import HandoffRecord
 
 
 # Identidades lógicas; soporte/tecnico conservan Atención/Hardware existentes.
@@ -199,6 +200,8 @@ class AgentState(TypedDict, total=False):
 
     # Control de transferencias
     handoff_history: list[dict[str, Any]]
+    # Registro estructurado interno; historial legacy conserva origen/destino.
+    handoff_records: list[HandoffRecord]
     handoff_count: int
 
     # Control de herramientas
@@ -292,7 +295,7 @@ def invalidate_request(state: AgentState, *, new_request: bool = False) -> Agent
         "claim_code": None, "supplier_id": None, "purchase_order_id": None,
         "purchase_order_item_ids": [], "payment": {}, "refund": {},
         "logistics": {}, "warranty": {}, "warranty_claim": {},
-        "handoff_count": 0, "handoff_history": [], "tool_iterations": {}, "errors": [],
+        "handoff_count": 0, "handoff_history": [], "handoff_records": [], "tool_iterations": {}, "errors": [],
     }
     if new_request:
         update.update(ticket_id=None, ticket_code=None, ticket_status=None,

@@ -125,6 +125,36 @@ def test_importacion_y_fabrica_sin_checkpointer(graph_module):
     assert {"soporte", "tecnico", "ventas", "almacen"} <= set(first.nodes)
 
 
+@pytest.mark.parametrize("origin,target,reason,error", [
+    ("soporte", "software", "Derivar", "no disponible"),
+    ("soporte", "almacen", "Derivar", "no permitida"),
+    ("ventas", "ventas", "Derivar", "mismo agente"),
+    ("soporte", "ventas", "", "Motivo"),
+])
+def test_auditoria_rechaza_handoffs_invalidos(graph_module, origin, target, reason, error):
+    state = {"messages": [AIMessage(content="", tool_calls=[{
+        "name": f"transferir_a_{target}", "args": {"motivo": reason}, "id": "call"}]),
+        ToolMessage(content="Transferencia", name=f"transferir_a_{target}", tool_call_id="call")]}
+    result = graph_module.registrar_handoff(state, origin)
+    assert result["next_agent"] == "finalizar"
+    assert error in result["errors"][-1]
+    assert not result.get("handoff_history")
+
+
+def test_registro_estructurado_y_repeticion_en_auditoria(graph_module):
+    state = {"messages": [ToolMessage(content="TRANSFERIR_TECNICO: Compatibilidad",
+                                       name="transferir_a_tecnico", tool_call_id="a")],
+             "request_revision": 2}
+    first = graph_module.registrar_handoff(state, "ventas")
+    assert first["handoff_history"] == [{"origen": "ventas", "destino": "tecnico"}]
+    assert first["handoff_records"][0]["motivo"] == "Compatibilidad"
+    assert first["handoff_records"][0]["request_revision"] == 2
+    repeated = graph_module.registrar_handoff({**state, **first}, "ventas")
+    assert repeated["next_agent"] == "finalizar"
+    assert "repetida" in repeated["errors"][-1]
+    assert graph_module.preparar_turno({**state, **first})["handoff_records"] == []
+
+
 def test_checkpointer_continuidad_aislamiento_y_controles(graph_module):
     from langgraph.checkpoint.memory import MemorySaver
 
@@ -315,3 +345,43 @@ def test_revision_permitida_aunque_inventario_siga_pendiente(graph):
     assert result["current_agent"] == "ventas"
     assert result["quote_scope"] == "solo_servicio"
     assert result["inventory_pending"] is True
+
+
+def test_lote_usa_mismo_destino_motivo_y_alcance(graph_module):
+    messages = [ToolMessage(content='{"motivo":"Primero","alcance":"solo_servicio"}', name="transferir_a_ventas", tool_call_id="a"),
+                ToolMessage(content='{"motivo":"Segundo","alcance":"sin_determinar"}', name="transferir_a_ventas", tool_call_id="b")]
+    result = graph_module.registrar_handoff({"messages": messages}, "tecnico")
+    assert graph_module.detectar_handoff(messages) == "ventas"
+    assert result["next_agent"] == "ventas"
+    assert result["quote_scope"] == "solo_servicio"
+    assert result["handoff_records"][0]["motivo"] == "Primero"
+
+
+def test_lote_ignora_error_y_herramientas_ajenas(graph_module):
+    messages = [ToolMessage(content="Fallo", name="transferir_a_tecnico", tool_call_id="a", status="error"),
+                ToolMessage(content="TRANSFERIR_VENTAS: Cotizar", name="transferir_a_ventas", tool_call_id="b"),
+                ToolMessage(content="Documento", name="consultar_documentacion", tool_call_id="c")]
+    assert graph_module.detectar_handoff(messages) == "ventas"
+    result = graph_module.registrar_handoff({"messages": messages}, "soporte")
+    assert result["handoff_records"][0]["motivo"] == "Cotizar"
+
+
+@pytest.mark.parametrize("requester", [None, "tecnico", "software"])
+def test_retorno_automatico_solicitante_y_disponibilidad(graph_module, requester):
+    state = {"messages": [ToolMessage(content="{}", name="consultar_inventario", tool_call_id="inv")],
+             "required_parts": [{"name": "SSD", "quantity": 1}], "inventory_pending": False,
+             "inventory_results": [{"tool_call_id": "inv"}], "inventory_requested_by": requester}
+    result = graph_module.registrar_handoff(state, "almacen")
+    assert result["next_agent"] == ({None: "ventas", "tecnico": "tecnico", "software": "finalizar"}[requester])
+    if requester != "software":
+        assert result["handoff_records"][0]["motivo"] == "Entregar inventario verificado"
+
+
+@pytest.mark.parametrize("name,status", [("consultar_inventario", "error"), ("transferir_a_ventas", "error"), ("otra", "success")])
+def test_inventario_antiguo_no_dispara_retorno_automatico(graph_module, name, status):
+    state = {"messages": [ToolMessage(content="Fallo", name=name, tool_call_id="nuevo", status=status)],
+             "required_parts": [{"name": "SSD", "quantity": 1}], "inventory_pending": False,
+             "inventory_results": [{"tool_call_id": "antiguo"}]}
+    result = graph_module.registrar_handoff(state, "almacen")
+    assert result["next_agent"] == "almacen"
+    assert not result.get("handoff_records")
