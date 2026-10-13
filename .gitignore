@@ -22,6 +22,7 @@ info.md
 IMPLEMENTATION_LOG.md
 implementation-progress.md
 multiagent-architecture.md
+memory.md
 
 #librerias
 node_modules/
@@ -36,3 +37,6 @@ dist/
 
 # Base vectorial RAG
 data/chroma/
+
+#contexto
+contexto/
