@@ -207,11 +207,18 @@ def test_checkpointer_continuidad_aislamiento_y_controles(graph_module):
 
 
 def test_fabrica_de_api_utiliza_checkpointer(graph_module, monkeypatch):
+    from langgraph.checkpoint.memory import MemorySaver
+
     # Ejecuta la fábrica real sin cargar FastAPI ni el resto de los patrones.
     factory = isolated_function("app/main.py", "_build_decentralized_graph", {"Any": object})
     monkeypatch.setitem(sys.modules, "app.agents.decentralized.graph", graph_module)
-    graph = factory()
-    assert graph.checkpointer is not None
+    # In-memory dependency explicitly injected for this isolated unit test only;
+    # production lifespan supplies the PostgreSQL saver, never a fallback.
+    checkpointer = MemorySaver()
+    with pytest.raises(TypeError):
+        factory()
+    graph = factory(checkpointer)
+    assert graph.checkpointer is checkpointer
     result = graph.invoke({"messages": [HumanMessage(content="Mi PC no enciende")]},
                           {"configurable": {"thread_id": "api-test"}})
     assert result["current_agent"] == "tecnico"

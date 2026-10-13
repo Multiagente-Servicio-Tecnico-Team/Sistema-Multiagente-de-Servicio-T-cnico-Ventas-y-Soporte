@@ -136,6 +136,56 @@ class DecentralizedRepository:
         with self.engine.connect() as connection:
             return self._ticket(connection, customer_id, ticket_id)[1]
 
+    def create_pending_payment(self, *, customer_id, ticket_id, quote_id, payment_code):
+        """Amount comes from locked SQL quote only. No model-supplied amount.
+
+        Row lock order matches quote creation: customer -> ticket -> quote.
+        Another code for a quote with an existing payment requires reconciliation;
+        this is an application conflict, not an assumed UNIQUE(quote_id).
+        All writers must follow this protocol for cross-thread serialization.
+        """
+        customer_id, ticket_id, quote_id = _id(customer_id), _id(ticket_id), _id(quote_id)
+        payment_code = _text(payment_code, 50)
+        with self.engine.begin() as connection:
+            self._customer(connection, customer_id)
+            tickets, ticket = self._ticket(connection, customer_id, ticket_id, lock=True)
+            quotes = self._table(connection, "quotes")
+            quote = connection.execute(select(quotes).where(
+                quotes.c.id == quote_id, quotes.c.ticket_id == ticket_id,
+            ).with_for_update()).mappings().first()
+            if quote is None:
+                raise LookupError("Cotización no encontrada")
+            if quote["status"] != "ACCEPTED":
+                raise ValueError("Cotización no aceptada en PostgreSQL")
+            amount = _money(quote["total_amount"])
+            if amount <= 0:
+                raise ValueError("Importe de pago debe ser positivo")
+            payments = self._table(connection, "payments")
+            values = dict(customer_id=customer_id, ticket_id=ticket_id, quote_id=quote_id,
+                          payment_code=payment_code, amount=amount)
+            existing = connection.execute(select(payments).where(
+                payments.c.payment_code == payment_code)).mappings().first()
+            if existing is not None:
+                if any(existing[key] != value for key, value in values.items()):
+                    raise RetryConflict("Código de pago con contenido incompatible")
+                return dict(existing)  # Preserve real payment/ticket status on retries.
+            if connection.execute(select(payments.c.id).where(
+                    payments.c.quote_id == quote_id)).first() is not None:
+                raise RetryConflict("Cotización con pago previo; requiere reconciliación")
+            if ticket["status"] != "QUOTED":
+                raise ValueError("Ticket no admite registro inicial de pago")
+            try:
+                row = connection.execute(insert(payments).values(**values, status="PENDING")
+                                         .returning(*payments.c)).mappings().one()
+            except IntegrityError:
+                raise RetryConflict("Conflicto al registrar código de pago") from None
+            updated = connection.execute(update(tickets).where(
+                tickets.c.id == ticket_id, tickets.c.customer_id == customer_id,
+                tickets.c.status == "QUOTED").values(status="PAYMENT_PENDING"))
+            if updated.rowcount != 1:
+                raise RuntimeError("No se actualizó exactamente el ticket esperado")
+            return dict(row)
+
     def list_tickets(self, *, customer_id):
         with self.engine.connect() as connection:
             tickets = self._table(connection, "tickets")

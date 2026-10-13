@@ -197,6 +197,19 @@ class PendingTicketOperation(TypedDict):
     payload: TicketCreationPayload
 
 
+class PaymentCreationPayload(TypedDict):
+    customer_id: int
+    ticket_id: int
+    quote_id: int
+    payment_code: str
+    # Amount is read exclusively from the accepted SQL quote, never from an LLM.
+
+
+class PendingPaymentOperation(TypedDict):
+    request_revision: int
+    payload: PaymentCreationPayload
+
+
 class AgentState(TypedDict, total=False):
     # Historial compartido entre agentes
     messages: Annotated[list[AnyMessage], add_messages]
@@ -240,6 +253,7 @@ class AgentState(TypedDict, total=False):
     ticket_code: str | None
     ticket_status: TicketStatus | None
     pending_ticket_operation: PendingTicketOperation | None
+    pending_payment_operation: PendingPaymentOperation | None
     quote_id: int | None
     quote_status: QuoteStatus | None
     payment_id: int | None
@@ -292,7 +306,8 @@ def invalidate_request(state: AgentState, *, new_request: bool = False) -> Agent
     también desvincula el ticket y los datos de ingreso. No borra registros SQL.
     Cualquier resultado asíncrono debe comprobar request_revision antes de aplicarse.
     """
-    if state.get("pending_ticket_operation") is not None:
+    if (state.get("pending_ticket_operation") is not None
+            or state.get("pending_payment_operation") is not None):
         from app.database.decentralized_repository import RetryConflict
         raise RetryConflict("Reconciliar operación pendiente antes de cambiar la solicitud")
     revision = state.get("request_revision", 0)
