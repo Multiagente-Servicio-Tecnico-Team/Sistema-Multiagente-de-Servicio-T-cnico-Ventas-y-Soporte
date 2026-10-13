@@ -49,7 +49,7 @@ def attention(state: ChatState) -> dict:
     if len(state["message"].split()) < 4:
         return {
             "reply": (
-                f"Hola {state['nombre']}. Soy TechFix Copilot. Puedo orientarte con "
+                f"Hola {state['name']}. Soy TechFix Copilot. Puedo orientarte con "
                 "soporte y reparaciones, consultar componentes y cotizaciones, "
                 "ayudarte a armar una PC según tu presupuesto y responder consultas "
                 "de garantía o logística. ¿Qué necesitas hoy?"
