@@ -152,6 +152,28 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("name ILIKE :pattern", query)
         self.assertEqual(parameters, {"pattern": "%SSD%"})
 
+    def test_ram_alternatives_are_scoped_to_memory_categories(self):
+        session = FakeSession([FakeResult(rows=[])])
+        repository = ServiceRepository(lambda: session)
+
+        repository.find_spare_part_alternatives("RAM_16GB")
+
+        query, parameters = session.calls[0]
+        self.assertIn("category ILIKE 'RAM%'", query)
+        self.assertIn("name ILIKE 'Memoria RAM%'", query)
+        self.assertNotIn("name ILIKE '%RAM%'", query)
+        self.assertEqual(parameters, {"pattern": "%RAM%"})
+
+    def test_battery_alternatives_exclude_cmos_and_rtc_cells(self):
+        session = FakeSession([FakeResult(rows=[])])
+        repository = ServiceRepository(lambda: session)
+
+        repository.find_spare_part_alternatives("REP-BAT-L2023")
+
+        query, _ = session.calls[0]
+        self.assertIn("name NOT ILIKE '%RTC%'", query)
+        self.assertIn("name NOT ILIKE '%CMOS%'", query)
+
     def test_ticket_insert_uses_parameters_and_starts_in_diagnosis(self):
         session = FakeSession([FakeResult(scalar=55)])
         repository = ServiceRepository(lambda: session)

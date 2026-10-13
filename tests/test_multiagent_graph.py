@@ -1,6 +1,8 @@
 import unittest
 from decimal import Decimal
 
+from langchain_core.messages import HumanMessage
+
 from app.agents.jerarquico.graph.builder import build_multiagent_graph
 from app.agents.jerarquico.retriever import MarkdownKnowledgeRetriever
 from app.agents.jerarquico.schemas import (
@@ -9,6 +11,8 @@ from app.agents.jerarquico.schemas import (
     QuoteConfirmation,
     TechnicalDiagnosis,
 )
+from app.agents.jerarquico.supervisor import make_customer_care_supervisor
+from app.agents.jerarquico.warehouse import make_warehouse_agent
 from app.agents.jerarquico.tools.quotes import calculate_quote
 from app.settings import Settings
 
@@ -23,8 +27,10 @@ class FakeStructuredModel:
         self.intake = intake
         self.diagnosis = diagnosis
         self.confirmation = confirmation
+        self.structured_output_methods = []
 
-    def with_structured_output(self, schema):
+    def with_structured_output(self, schema, *, method="function_calling"):
+        self.structured_output_methods.append((schema, method))
         return FakeStructuredResponse(self, schema)
 
 
@@ -53,6 +59,7 @@ class FakeRepository:
         unit_price=Decimal("10.25"),
         missing_parts=None,
         alternatives=None,
+        direct_parts=None,
     ) -> None:
         self.customer = (
             {"id": 12, "name": "Ana", "last_name": "Prueba"} if customer else None
@@ -63,6 +70,7 @@ class FakeRepository:
         self.alternative_lookups = []
         self.missing_parts = set(missing_parts or ())
         self.alternatives = list(alternatives or ())
+        self.direct_parts = dict(direct_parts or {})
         self.created_ticket = None
         self.saved_diagnosis = None
         self.saved_quote = None
@@ -96,6 +104,8 @@ class FakeRepository:
         self.lookups.append(search_term)
         if search_term in self.missing_parts:
             return []
+        if search_term in self.direct_parts:
+            return [self.direct_parts[search_term]]
         part_id = 7 if search_term == "Pasta_Termica" else 8
         return [
             {
@@ -203,6 +213,144 @@ def invoke(
 
 
 class MultiagentGraphTests(unittest.TestCase):
+    def test_unique_fuzzy_fan_match_still_offers_other_family_variants(self):
+        first_fan = {
+            "id": 41,
+            "code": "COOL-FAN-ASUS-FX",
+            "name": "Ventilador CPU/GPU Asus TUF FX505",
+            "category": "Repuesto Laptop",
+            "unit_price": Decimal("35.00"),
+            "current_stock": 2,
+        }
+        repository = FakeRepository(
+            direct_parts={"Ventilador_CPU": first_fan},
+            alternatives=[
+                first_fan,
+                {
+                    "id": 42,
+                    "code": "FAN-LAPTOP-HP",
+                    "name": "Ventilador laptop HP Pavilion",
+                    "category": "Repuesto Laptop",
+                    "unit_price": Decimal("38.00"),
+                    "current_stock": 1,
+                },
+                {
+                    "id": 43,
+                    "code": "CASE-FAN-KIT",
+                    "name": "Gabinete con ventiladores incluidos",
+                    "category": "Gabinetes",
+                    "unit_price": Decimal("80.00"),
+                    "current_stock": 1,
+                },
+            ],
+        )
+        warehouse = make_warehouse_agent(repository)
+
+        result = warehouse(
+            {
+                "request_type": "REPAIR",
+                "manual_selection_complete": True,
+                "required_parts": [
+                    {"search_term": "Ventilador_CPU", "quantity": 1}
+                ],
+                "labor_task_type": "diagnosis",
+                "ticket_code": "TCK-TEST",
+                "messages": [],
+            }
+        )
+
+        self.assertEqual(result["outcome"], "awaiting_inventory_selection")
+        self.assertEqual(
+            [option["code"] for option in result["inventory_options"]],
+            ["COOL-FAN-ASUS-FX", "FAN-LAPTOP-HP"],
+        )
+        self.assertNotIn("CASE-FAN-KIT", result["messages"][-1].content)
+
+    def test_service_intake_falls_back_to_original_message_when_summary_is_missing(self):
+        repository = FakeRepository()
+        model = make_model(
+            intake=IntakeDecision(route="service", request_type="SUPPORT"),
+        )
+        supervisor = make_customer_care_supervisor(model, repository)
+        customer_message = (
+            "Tengo mi equipo lento y las aplicaciones se demoran o congelan."
+        )
+
+        result = supervisor(
+            {
+                "messages": [HumanMessage(content=customer_message)],
+                "customer_id": 12,
+            }
+        )
+
+        self.assertEqual(result["route"], "service")
+        self.assertEqual(result["title"], "Solicitud de atención")
+        self.assertEqual(result["failure_description"], customer_message)
+        self.assertEqual(
+            repository.created_ticket["failure_description"],
+            customer_message,
+        )
+
+    def test_service_intake_requests_details_without_message_fallback(self):
+        repository = FakeRepository()
+        model = make_model(
+            intake=IntakeDecision(route="service", request_type="SUPPORT"),
+        )
+        supervisor = make_customer_care_supervisor(model, repository)
+
+        result = supervisor({"messages": [], "customer_id": 12})
+
+        self.assertEqual(result["route"], "clarification")
+        self.assertEqual(result["outcome"], "service_description_required")
+        self.assertIsNone(repository.created_ticket)
+
+    def test_intake_and_diagnosis_normalize_null_parts_to_empty_lists(self):
+        intake = IntakeDecision.model_validate(
+            {"route": "service", "request_type": "SUPPORT", "required_parts": None}
+        )
+        diagnosis = TechnicalDiagnosis.model_validate(
+            {
+                "provisional_diagnosis": "Requiere evaluación.",
+                "labor_task_type": "diagnosis",
+                "required_parts": None,
+            }
+        )
+
+        self.assertEqual(intake.required_parts, [])
+        self.assertEqual(diagnosis.required_parts, [])
+
+        required_parts_schema = IntakeDecision.model_json_schema()["properties"][
+            "required_parts"
+        ]
+        self.assertEqual(required_parts_schema["type"], "array")
+
+        model = make_model(
+            intake=IntakeDecision.model_validate(
+                {
+                    "route": "service",
+                    "request_type": "REPAIR",
+                    "title": "Equipo lento",
+                    "failure_description": "Las aplicaciones se congelan.",
+                    "required_parts": None,
+                }
+            ),
+            diagnosis=diagnosis,
+        )
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=FakeRepository(),
+            model=model,
+        )
+        invoke(graph, "Tengo mi equipo lento y las aplicaciones se congelan.")
+
+        self.assertEqual(
+            model.structured_output_methods,
+            [
+                (IntakeDecision, "json_mode"),
+                (TechnicalDiagnosis, "json_mode"),
+            ],
+        )
+
     def test_hierarchical_package_exports_public_graph_api(self):
         from app.agents.jerarquico import (
             build_multiagent_graph as package_builder,
@@ -344,8 +492,10 @@ class MultiagentGraphTests(unittest.TestCase):
                 intake=IntakeDecision(
                     route="service",
                     request_type="SUPPORT",
-                    title="Aplicación se cierra",
-                    failure_description="La aplicación se cierra al iniciar.",
+                    title="Windows no inicia",
+                    failure_description=(
+                        "La pantalla azul 0x0000007B impide iniciar Windows."
+                    ),
                 ),
                 diagnosis=TechnicalDiagnosis(
                     provisional_diagnosis="Posible incompatibilidad de software.",
@@ -353,14 +503,20 @@ class MultiagentGraphTests(unittest.TestCase):
                     required_parts=[],
                 ),
             ),
-            retriever=MarkdownKnowledgeRetriever(documents=()),
         )
 
-        result = invoke(graph, "La aplicación se cierra al iniciar.")
+        result = invoke(
+            graph,
+            "La pantalla azul 0x0000007B impide iniciar Windows.",
+        )
 
         self.assertEqual(result["outcome"], "awaiting_confirmation")
         self.assertEqual(repository.created_ticket["request_type"], "SUPPORT")
         self.assertEqual(repository.saved_diagnosis["diagnosis_type"], "SOFTWARE")
+        self.assertEqual(
+            [document["id"] for document in result["rag_documents"]],
+            ["manual_servicio:002"],
+        )
         self.assertEqual(
             repository.saved_diagnosis["diagnosis"],
             "Posible incompatibilidad de software.",
@@ -557,7 +713,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(repository.lookups, [])
         self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
 
-    def test_slow_applications_with_unconfirmed_cause_quotes_diagnosis_only(self):
+    def test_slow_applications_with_unconfirmed_cause_checks_manual_ssd_candidate(self):
         repository = FakeRepository()
         graph = build_multiagent_graph(
             settings=make_settings(),
@@ -572,9 +728,7 @@ class MultiagentGraphTests(unittest.TestCase):
                 diagnosis=TechnicalDiagnosis(
                     provisional_diagnosis="El almacenamiento podría limitar el rendimiento.",
                     labor_task_type="diagnosis",
-                    required_parts=[
-                        PartRequest(search_term="SSD_1TB", quantity=1)
-                    ],
+                    required_parts=[],
                 ),
             ),
         )
@@ -583,10 +737,16 @@ class MultiagentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "awaiting_confirmation")
         self.assertEqual(result["labor_task_type"], "diagnosis")
-        self.assertEqual(repository.lookups, [])
+        self.assertEqual(repository.lookups, ["SSD_1TB"])
         self.assertEqual(result["quote"]["labor_cost"], Decimal("50.00"))
-        self.assertEqual(result["quote"]["parts_cost"], Decimal("0.00"))
-        self.assertEqual(result["quote"]["parts"], [])
+        self.assertEqual(result["quote"]["parts_cost"], Decimal("10.25"))
+        self.assertEqual(
+            [part["code"] for part in result["quote"]["parts"]],
+            ["SSD_1TB"],
+        )
+        self.assertIn("te recomiendo evaluar", result["messages"][-1].content)
+        self.assertIn("confirmar que el almacenamiento sea la causa", result["messages"][-1].content)
+        self.assertIn("verificar la compatibilidad", result["messages"][-1].content)
         self.assertIn(
             "Laptop lenta y demora en abrir aplicaciones",
             [document["title"] for document in result["rag_documents"]],
@@ -596,9 +756,93 @@ class MultiagentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "quoted")
         self.assertEqual(repository.saved_quote["labor_cost"], Decimal("50.00"))
-        self.assertEqual(repository.saved_quote["parts_cost"], Decimal("0.00"))
-        self.assertEqual(repository.saved_quote["total_amount"], Decimal("50.00"))
-        self.assertEqual(repository.saved_quote["parts"], [])
+        self.assertEqual(repository.saved_quote["parts_cost"], Decimal("10.25"))
+        self.assertEqual(repository.saved_quote["total_amount"], Decimal("60.25"))
+        self.assertEqual(
+            [part["code"] for part in repository.saved_quote["parts"]],
+            ["SSD_1TB"],
+        )
+
+    def test_ram_manual_candidate_lists_only_ram_variants_and_waits_for_selection(self):
+        selected_code = "RAM-D5-16GB-KNG"
+        selected_item = {
+            "id": 31,
+            "code": selected_code,
+            "name": "Memoria RAM DDR5 16GB Kingston",
+            "category": "RAM Desktop",
+            "unit_price": Decimal("75.00"),
+            "current_stock": 2,
+        }
+        repository = FakeRepository(
+            missing_parts={"RAM_16GB"},
+            direct_parts={selected_code: selected_item},
+            alternatives=[
+                selected_item,
+                {
+                    "id": 32,
+                    "code": "RAM-DDR4-16GB",
+                    "name": "Memoria RAM SODIMM DDR4 16GB",
+                    "category": "RAM Laptop",
+                    "unit_price": Decimal("60.00"),
+                    "current_stock": 1,
+                },
+                {
+                    "id": 33,
+                    "code": "TOOL-ESD",
+                    "name": "Kit herramientas y pulsera antiestática",
+                    "category": "Herramientas",
+                    "unit_price": Decimal("20.00"),
+                    "current_stock": 4,
+                },
+            ],
+        )
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="REPAIR",
+                    title="Uso elevado de memoria",
+                    failure_description="RAM al 90% en reposo y aplicaciones congeladas.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis=(
+                        "La memoria podría ser insuficiente; falta validar "
+                        "la compatibilidad del equipo."
+                    ),
+                    labor_task_type="diagnosis",
+                    required_parts=[
+                        PartRequest(search_term="RAM_16GB", quantity=1)
+                    ],
+                ),
+            ),
+        )
+
+        result = invoke(
+            graph,
+            "Tengo la RAM al 90% en reposo y las aplicaciones se congelan.",
+        )
+
+        self.assertEqual(result["outcome"], "awaiting_inventory_selection")
+        self.assertEqual(repository.lookups, ["RAM_16GB"])
+        self.assertEqual(
+            [option["code"] for option in result["inventory_options"]],
+            [selected_code, "RAM-DDR4-16GB"],
+        )
+        self.assertNotIn("TOOL-ESD", result["messages"][-1].content)
+        self.assertIn(selected_code, result["messages"][-1].content)
+        self.assertIn("compatibilidad", result["messages"][-1].content)
+
+        selected = invoke(graph, selected_code, initial=False)
+
+        self.assertEqual(selected["outcome"], "awaiting_confirmation")
+        self.assertEqual(repository.lookups, ["RAM_16GB", selected_code])
+        self.assertEqual(
+            [part["code"] for part in selected["quote"]["parts"]],
+            [selected_code],
+        )
+        self.assertEqual(selected["quote"]["parts_cost"], Decimal("75.00"))
 
     def test_suggests_single_in_stock_ssd_capacity_alternative(self):
         repository = FakeRepository(
@@ -653,7 +897,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(answer.count("SSD_500GB"), 1)
         self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
 
-    def test_lists_multiple_available_same_family_options_without_quoting(self):
+    def test_lists_multiple_available_options_and_continues_after_code_selection(self):
         repository = FakeRepository(
             missing_parts={"SSD_1TB"},
             alternatives=[
@@ -671,6 +915,13 @@ class MultiagentGraphTests(unittest.TestCase):
                     "unit_price": Decimal("90.00"),
                     "current_stock": 1,
                 },
+                {
+                    "id": 21,
+                    "code": "TOOL-NVME-USB",
+                    "name": "Carcasa USB para SSD M.2 NVMe",
+                    "unit_price": Decimal("16.00"),
+                    "current_stock": 4,
+                },
             ],
         )
         graph = build_multiagent_graph(
@@ -685,21 +936,42 @@ class MultiagentGraphTests(unittest.TestCase):
                 ),
                 diagnosis=TechnicalDiagnosis(
                     provisional_diagnosis="Almacenamiento por revisar.",
-                    labor_task_type="maintenance",
-                    required_parts=[
-                        PartRequest(search_term="SSD_1TB", quantity=1)
-                    ],
+                    labor_task_type="diagnosis",
+                    required_parts=[],
                 )
             ),
         )
 
         result = invoke(graph, "Mi laptop está lenta y demora en abrir aplicaciones.")
 
-        self.assertEqual(result["outcome"], "inventory_unavailable")
+        self.assertEqual(result["outcome"], "awaiting_inventory_selection")
+        self.assertTrue(result["awaiting_inventory_selection"])
         self.assertIn("SSD_500GB", result["messages"][-1].content)
         self.assertIn("SSD_2TB", result["messages"][-1].content)
+        self.assertNotIn("TOOL-NVME-USB", result["messages"][-1].content)
+        self.assertNotIn("Carcasa USB", result["messages"][-1].content)
+        self.assertIn("ya está registrado para diagnóstico", result["messages"][-1].content)
         self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
+
+        result = invoke(graph, "SSD_500GB", initial=False)
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertFalse(result["awaiting_inventory_selection"])
+        self.assertEqual(repository.lookups, ["SSD_1TB", "SSD_500GB"])
+        self.assertEqual(
+            [part["code"] for part in result["quote"]["parts"]],
+            ["SSD_500GB"],
+        )
+        self.assertIn("verificar la compatibilidad", result["messages"][-1].content)
+
+        result = invoke(graph, "Sí, confirma la propuesta.", initial=False)
+
+        self.assertEqual(result["outcome"], "quoted")
+        self.assertEqual(
+            [part["code"] for part in repository.saved_quote["parts"]],
+            ["SSD_500GB"],
+        )
 
     def test_reports_explicitly_when_requested_part_and_alternatives_are_out_of_stock(self):
         repository = FakeRepository(
@@ -743,6 +1015,7 @@ class MultiagentGraphTests(unittest.TestCase):
         )
         self.assertIn("SSD_500GB", result["messages"][-1].content)
         self.assertIn("stock 0", result["messages"][-1].content)
+        self.assertIn("ya está registrado para diagnóstico", result["messages"][-1].content)
         self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
 
     def test_unresolved_manual_alternatives_do_not_create_a_quote(self):
