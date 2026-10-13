@@ -1,6 +1,8 @@
 ﻿# Preguntas frecuentes de atención
 
-Este contenido describe las funciones del asistente y la información operativa confirmada. Responde solo lo que pregunta el cliente. No presentes valores de ejemplo, escenarios ficticios o datos de prueba como datos reales.
+<!-- Datos comerciales de demostración. Reemplazar por datos del negocio antes de producción. -->
+
+Este contenido describe las funciones y datos de atención de TechFix. Responde directamente lo que pregunta el cliente y ofrece detalles útiles relacionados.
 
 ## Servicios disponibles
 
@@ -10,11 +12,11 @@ El diagnóstico por chat es preliminar y no sustituye la inspección técnica. E
 
 ## Ubicación de la tienda
 
-No hay una dirección física confirmada en la información disponible. No inventes ni uses direcciones de ejemplo. Si preguntan dónde está el local, explica que no tienes una ubicación confirmada y ofrece continuar con una cotización o registrar la preferencia de retiro presencial cuando el flujo la solicite. No asegures que el equipo ya fue recibido por elegir retiro.
+Sí, contamos con tienda física. Estamos en **Av. Los Talleres 450, San Borja, Lima, Perú**. Atendemos consultas y coordinamos el retiro presencial de equipos y productos. La elección de retiro en el chat registra la preferencia logística; la recepción efectiva del equipo se confirma por separado. Si preguntan cómo llegar, comparte la dirección y sugiere buscar “TechFix, Av. Los Talleres 450, San Borja” en su aplicación de mapas.
 
 ## Horario de atención
 
-No hay un horario de atención confirmado en la información disponible. No inventes horarios. Indica que no puedes confirmar el horario y ofrece ayudar con consultas de catálogo, cotizaciones o soporte.
+Atendemos de lunes a viernes de 09:00 a 18:00 y los sábados de 09:00 a 13:00. Domingos y feriados no atendemos. Hora local de Lima, Perú.
 
 ## Tarifas y cotizaciones
 
@@ -22,7 +24,7 @@ Los totales de reparación, diagnóstico y armado se calculan con los valores vi
 
 ## Pagos
 
-Después de aceptar una cotización, el sistema puede registrar una orden de pago pendiente. Pendiente significa que el pago no está confirmado. No afirmes que se recibió dinero, que se emitió un comprobante o que existe una reserva. Los medios de pago no están confirmados; no asegures que se acepta tarjeta, Yape, Plin o transferencia ni solicites credenciales o datos sensibles.
+Después de aceptar una cotización, el sistema puede registrar una orden de pago pendiente. Pendiente significa que el pago no está confirmado. No afirmes que se recibió dinero, que se emitió un comprobante o que existe una reserva. Los medios de pago no están configurados. No asegures que se acepta tarjeta, Yape, Plin o transferencia ni solicites credenciales o datos sensibles.
 
 ## Garantía
 
@@ -30,7 +32,7 @@ La vigencia individual se consulta usando el código exacto de la póliza vincul
 
 ## Retiro y envío
 
-El cliente puede indicar retiro presencial o envío por courier como preferencia logística cuando el flujo de venta o servicio lo solicite. Elegir una opción solo registra la preferencia; no confirma recepción, despacho, seguimiento, costo ni fecha de entrega. No hay dirección ni tarifa de envío confirmada.
+El cliente puede indicar retiro presencial en la tienda de Av. Los Talleres 450, San Borja, o envío por courier como preferencia logística cuando el flujo de venta o servicio lo solicite. Elegir una opción registra la preferencia, pero no confirma recepción, despacho, seguimiento, costo ni fecha de entrega. Los costos y tiempos del courier se confirman al coordinar el envío.
 
 ## Compras y disponibilidad
 

@@ -88,3 +88,9 @@
   avería por una bienvenida que resume soporte, compras/cotizaciones, armado,
   garantías y logística; actualizado React, Streamlit y chat estático. No se
   ejecutaron pruebas por ser un cambio de texto/UI.
+- Actualización de FAQ de tienda (2026-10-13): a solicitud del usuario se
+  añadieron dirección ficticia en San Borja y horario peruano al RAG, marcados
+  internamente como datos de demostración para sustituir antes de producción.
+  La FAQ los recupera para ubicación/horario; retiro no se confunde con recepción.
+  14 pruebas FAQ/workflows, compileall y diff-check aprobados. Sin escrituras BD.
+  Evidencia: spec 14 y docs 17.
