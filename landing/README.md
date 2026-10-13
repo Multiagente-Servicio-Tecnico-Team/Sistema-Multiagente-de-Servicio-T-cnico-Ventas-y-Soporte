@@ -84,7 +84,7 @@ El cliente `src/api/auth.js` decide el modo según `VITE_API_URL`:
 
 | Endpoint | Cuerpo | Respuesta esperada |
 | --- | --- | --- |
-| `/registro` | `{ nombre, apellido, email, telefono, password }` | `201 { usuario }` · `409` correo duplicado · `422` datos inválidos |
+| `/registro` | `{ nombre, apellido, email, telefono, password }` | `201 { usuario }` + cookie · `409` correo duplicado · `422` datos inválidos |
 | `/login` | `{ email, password }` | `200 { usuario }` + cookie · `401` credenciales · `429` intentos |
 | `/logout` | — | `204` y borra la cookie |
 | `/recuperar` | `{ email }` | `200` siempre; si la cuenta existe envía el enlace `/portal/restablecer?token=…` por correo |
