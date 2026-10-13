@@ -64,20 +64,33 @@ class FakeRepository:
         self.missing_parts = set(missing_parts or ())
         self.alternatives = list(alternatives or ())
         self.created_ticket = None
+        self.saved_diagnosis = None
         self.saved_quote = None
+        self.cancelled_ticket = None
 
     def find_customer(self, email):
         del email
         return self.customer
 
-    def create_ticket(self, **values):
+    def create_intake_ticket(self, **values):
         self.created_ticket = values
         return 84
 
-    def create_ticket_with_quote(self, **values):
-        self.created_ticket = values
+    def update_ticket_diagnosis(self, **values):
+        self.saved_diagnosis = values
+
+    def accept_ticket_quote(self, **values):
         self.saved_quote = values
-        return 84, 91
+        return {
+            "quote_id": 91,
+            "payment_id": 92,
+            "payment_code": "PAY-TEST",
+            "payment_status": "PENDING",
+        }
+
+    def cancel_ticket(self, _ticket_id, _customer_id):
+        self.cancelled_ticket = (_ticket_id, _customer_id)
+        return None
 
     def find_spare_parts(self, search_term):
         self.lookups.append(search_term)
@@ -267,7 +280,7 @@ class MultiagentGraphTests(unittest.TestCase):
                 ],
             )
 
-    def test_suggests_rag_diagnosis_without_persisting_before_confirmation(self):
+    def test_suggests_rag_diagnosis_after_intake_ticket_is_created(self):
         repository = FakeRepository()
         graph = build_multiagent_graph(
             settings=make_settings(),
@@ -279,7 +292,8 @@ class MultiagentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "awaiting_confirmation")
         self.assertTrue(result["awaiting_quote_confirmation"])
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
+        self.assertEqual(repository.saved_diagnosis["diagnosis_type"], "HARDWARE")
         self.assertIsNone(repository.saved_quote)
         self.assertEqual(
             [document["id"] for document in result["rag_documents"]],
@@ -300,7 +314,7 @@ class MultiagentGraphTests(unittest.TestCase):
             result["messages"][-1].content,
         )
 
-    def test_confirmation_persists_ticket_and_quote_atomically(self):
+    def test_confirmation_accepts_quote_for_existing_service_ticket(self):
         repository = FakeRepository()
         graph = build_multiagent_graph(
             settings=make_settings(),
@@ -309,18 +323,48 @@ class MultiagentGraphTests(unittest.TestCase):
         )
 
         suggestion = invoke(graph)
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertEqual(suggestion["outcome"], "awaiting_confirmation")
 
         result = invoke(graph, "Sí, confirma", initial=False)
 
         self.assertEqual(result["outcome"], "quoted")
         self.assertFalse(result["awaiting_quote_confirmation"])
-        self.assertEqual(repository.created_ticket["customer_id"], 12)
-        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertEqual(repository.saved_quote["total_amount"], Decimal("60.50"))
-        self.assertIn("ST-", result["messages"][-1].content)
+        self.assertEqual(repository.saved_quote["quote_type"], "REPAIR")
+        self.assertIn("TCK-", result["messages"][-1].content)
         self.assertIn("S/ 60.50", result["messages"][-1].content)
+
+    def test_software_support_persists_software_diagnosis_on_intake_ticket(self):
+        repository = FakeRepository()
+        graph = build_multiagent_graph(
+            settings=make_settings(),
+            repository=repository,
+            model=make_model(
+                intake=IntakeDecision(
+                    route="service",
+                    request_type="SUPPORT",
+                    title="Aplicación se cierra",
+                    failure_description="La aplicación se cierra al iniciar.",
+                ),
+                diagnosis=TechnicalDiagnosis(
+                    provisional_diagnosis="Posible incompatibilidad de software.",
+                    labor_task_type="diagnosis",
+                    required_parts=[],
+                ),
+            ),
+            retriever=MarkdownKnowledgeRetriever(documents=()),
+        )
+
+        result = invoke(graph, "La aplicación se cierra al iniciar.")
+
+        self.assertEqual(result["outcome"], "awaiting_confirmation")
+        self.assertEqual(repository.created_ticket["request_type"], "SUPPORT")
+        self.assertEqual(repository.saved_diagnosis["diagnosis_type"], "SOFTWARE")
+        self.assertEqual(
+            repository.saved_diagnosis["diagnosis"],
+            "Posible incompatibilidad de software.",
+        )
 
     def test_stock_change_requires_a_new_confirmation(self):
         repository = FakeRepository()
@@ -336,7 +380,7 @@ class MultiagentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "awaiting_confirmation")
         self.assertTrue(result["awaiting_quote_confirmation"])
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
         self.assertIn("propuesta anterior", result["messages"][-1].content)
         self.assertIn("valores actualizados", result["messages"][-1].content)
@@ -355,7 +399,7 @@ class MultiagentGraphTests(unittest.TestCase):
         result = invoke(graph, "Sí, confirma", initial=False)
 
         self.assertEqual(result["outcome"], "awaiting_confirmation")
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
         self.assertIn("cambió", result["messages"][-1].content)
         self.assertIn("el total provisional es S/ 70.50", result["messages"][-1].content)
@@ -374,9 +418,10 @@ class MultiagentGraphTests(unittest.TestCase):
         result = invoke(graph, "No, gracias", initial=False)
 
         self.assertEqual(result["outcome"], "declined")
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
+        self.assertEqual(repository.cancelled_ticket, (84, 12))
         self.assertIsNone(repository.saved_quote)
-        self.assertIn("No guardé", result["messages"][-1].content)
+        self.assertIn("no guardé la cotización", result["messages"][-1].content)
 
     def test_unclear_confirmation_keeps_pending_suggestion(self):
         repository = FakeRepository()
@@ -393,10 +438,10 @@ class MultiagentGraphTests(unittest.TestCase):
 
         self.assertEqual(result["route"], "awaiting_confirmation")
         self.assertTrue(result["awaiting_quote_confirmation"])
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIn("¿Confirmas", result["messages"][-1].content)
 
-    def test_stock_shortage_does_not_persist_ticket_or_quote(self):
+    def test_stock_shortage_keeps_intake_ticket_without_quote(self):
         repository = FakeRepository(stock=0)
         graph = build_multiagent_graph(
             settings=make_settings(),
@@ -407,7 +452,7 @@ class MultiagentGraphTests(unittest.TestCase):
         result = invoke(graph)
 
         self.assertEqual(result["outcome"], "inventory_unavailable")
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
         self.assertIn("stock actual es insuficiente", result["messages"][-1].content)
 
@@ -422,7 +467,7 @@ class MultiagentGraphTests(unittest.TestCase):
         result = invoke(graph)
 
         self.assertEqual(result["outcome"], "inventory_unavailable")
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
         self.assertIn("precio positivo", result["messages"][-1].content)
 
@@ -447,7 +492,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(result["labor_task_type"], "diagnosis")
         self.assertTrue(result["awaiting_quote_confirmation"])
         self.assertEqual(repository.lookups, [])
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
         self.assertEqual(result["quote"]["labor_cost"], Decimal("50.00"))
         self.assertEqual(result["quote"]["parts_cost"], Decimal("0.00"))
@@ -455,14 +500,14 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(result["quote"]["parts"], [])
         self.assertIn("diagnostique la falla", result["messages"][-1].content)
         self.assertIn("S/ 50.00", result["messages"][-1].content)
-        self.assertIn("generar un ticket", result["messages"][-1].content)
+        self.assertIn("ya está registrado", result["messages"][-1].content)
         self.assertIn("repuestos quedan en S/ 0.00", result["messages"][-1].content)
 
         result = invoke(graph, "Sí, confirma", initial=False)
 
         self.assertEqual(result["outcome"], "quoted")
         self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
-        self.assertEqual(repository.created_ticket["customer_id"], 12)
+        self.assertEqual(repository.saved_quote["quote_type"], "REPAIR")
         self.assertIsNotNone(repository.saved_quote)
         self.assertEqual(repository.saved_quote["labor_cost"], Decimal("50.00"))
         self.assertEqual(repository.saved_quote["parts_cost"], Decimal("0.00"))
@@ -472,7 +517,8 @@ class MultiagentGraphTests(unittest.TestCase):
             "Costo fijo de mano de obra: S/ 50.00",
             repository.saved_quote["observations"],
         )
-        self.assertIn("diagnóstico: S/ 50.00", result["messages"][-1].content)
+        self.assertIn("por S/ 50.00 está PENDIENTE", result["messages"][-1].content)
+        self.assertIn("retiro presencial en tienda o envío por courier", result["messages"][-1].content)
 
     def test_declined_diagnostic_quote_does_not_persist(self):
         repository = FakeRepository()
@@ -490,9 +536,10 @@ class MultiagentGraphTests(unittest.TestCase):
 
         self.assertEqual(suggestion["outcome"], "awaiting_confirmation")
         self.assertEqual(result["outcome"], "declined")
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
+        self.assertIsNotNone(repository.cancelled_ticket)
         self.assertIsNone(repository.saved_quote)
-        self.assertIn("No guardé el ticket ni la cotización", result["messages"][-1].content)
+        self.assertIn("ticket quedó cancelado", result["messages"][-1].content)
 
     def test_unknown_case_does_not_use_model_generated_parts(self):
         repository = FakeRepository()
@@ -508,7 +555,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "awaiting_confirmation")
         self.assertEqual(result["required_parts"], [])
         self.assertEqual(repository.lookups, [])
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
 
     def test_slow_applications_with_unconfirmed_cause_quotes_diagnosis_only(self):
         repository = FakeRepository()
@@ -604,7 +651,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertNotIn("Guía consultada", answer)
         self.assertNotIn("Orientación técnica preliminar", answer)
         self.assertEqual(answer.count("SSD_500GB"), 1)
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
 
     def test_lists_multiple_available_same_family_options_without_quoting(self):
         repository = FakeRepository(
@@ -651,7 +698,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "inventory_unavailable")
         self.assertIn("SSD_500GB", result["messages"][-1].content)
         self.assertIn("SSD_2TB", result["messages"][-1].content)
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
 
     def test_reports_explicitly_when_requested_part_and_alternatives_are_out_of_stock(self):
@@ -696,7 +743,7 @@ class MultiagentGraphTests(unittest.TestCase):
         )
         self.assertIn("SSD_500GB", result["messages"][-1].content)
         self.assertIn("stock 0", result["messages"][-1].content)
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
 
     def test_unresolved_manual_alternatives_do_not_create_a_quote(self):
         repository = FakeRepository()
@@ -725,7 +772,7 @@ class MultiagentGraphTests(unittest.TestCase):
         self.assertEqual(result["quote"]["labor_cost"], Decimal("50.00"))
         self.assertEqual(result["quote"]["parts_cost"], Decimal("0.00"))
         self.assertEqual(repository.lookups, [])
-        self.assertIsNone(repository.created_ticket)
+        self.assertEqual(repository.created_ticket["request_type"], "REPAIR")
         self.assertIsNone(repository.saved_quote)
         self.assertIn("causa exacta", result["messages"][-1].content)
 

@@ -75,7 +75,7 @@ class SettingsTests(unittest.TestCase):
     def test_labor_prices_have_fixed_defaults_in_peruvian_soles(self):
         settings = self.load_from_environment({})
 
-        self.assertEqual(settings.labor_maintenance_price, Decimal("40.00"))
+        self.assertEqual(settings.labor_maintenance_price, Decimal("35.00"))
         self.assertEqual(settings.labor_diagnosis_price, Decimal("50.00"))
 
     def test_rejects_nonpositive_fixed_labor_prices(self):
