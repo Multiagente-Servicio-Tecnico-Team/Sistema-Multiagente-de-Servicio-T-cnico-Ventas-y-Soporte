@@ -184,6 +184,19 @@ class WarrantyClaimData(TypedDict, total=False):
     resolved_at: datetime | None
 
 
+class TicketCreationPayload(TypedDict):
+    customer_id: int
+    code: str
+    title: str
+    failure_description: str
+    request_type: RequestType
+
+
+class PendingTicketOperation(TypedDict):
+    request_revision: int
+    payload: TicketCreationPayload
+
+
 class AgentState(TypedDict, total=False):
     # Historial compartido entre agentes
     messages: Annotated[list[AnyMessage], add_messages]
@@ -226,6 +239,7 @@ class AgentState(TypedDict, total=False):
     ticket_id: int | None
     ticket_code: str | None
     ticket_status: TicketStatus | None
+    pending_ticket_operation: PendingTicketOperation | None
     quote_id: int | None
     quote_status: QuoteStatus | None
     payment_id: int | None
@@ -278,6 +292,9 @@ def invalidate_request(state: AgentState, *, new_request: bool = False) -> Agent
     también desvincula el ticket y los datos de ingreso. No borra registros SQL.
     Cualquier resultado asíncrono debe comprobar request_revision antes de aplicarse.
     """
+    if state.get("pending_ticket_operation") is not None:
+        from app.database.decentralized_repository import RetryConflict
+        raise RetryConflict("Reconciliar operación pendiente antes de cambiar la solicitud")
     revision = state.get("request_revision", 0)
     if type(revision) is not int or revision < 0:
         raise ValueError("Versión de solicitud inválida")
