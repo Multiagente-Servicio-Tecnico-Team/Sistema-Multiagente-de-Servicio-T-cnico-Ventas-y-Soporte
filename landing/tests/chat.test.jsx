@@ -5,7 +5,12 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import Assistant from "../src/pages/portal/Assistant.jsx";
 import { StoreProvider } from "../src/data/store.jsx";
 import { RequireRole } from "../src/components/ui.jsx";
-import { CHAT_MESSAGES, ChatError, createChatApi } from "../src/api/chat.js";
+import {
+  CHAT_MESSAGES,
+  ChatError,
+  createChatApi,
+  TICKET_STATUS_LABEL,
+} from "../src/api/chat.js";
 
 const future = { v7_startTransition: true, v7_relativeSplatPath: true };
 const QUOTE = { status: "proposed", currency: "PEN", total: "260.00", lines: [{ label: "Instalación de SSD", amount: "80.00" }, { label: "SSD de 480 GB", amount: "180.00" }] };
@@ -54,6 +59,12 @@ describe("cliente del chat", () => {
 
   it("sin VITE_CHAT_URL queda en modo demostración", () => {
     expect(createChatApi().mode).toBe("mock");
+  });
+
+  it("traduce estados de pago pendiente y garantía en revisión", () => {
+    expect(TICKET_STATUS_LABEL.PAYMENT_PENDING).toBe("Pago pendiente");
+    expect(TICKET_STATUS_LABEL.WARRANTY_IN_REVIEW).toBe("Garantía en revisión");
+    expect(TICKET_STATUS_LABEL.READY_FOR_DELIVERY).toBe("Listo para despacho");
   });
 });
 
