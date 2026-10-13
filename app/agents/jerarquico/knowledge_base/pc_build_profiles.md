@@ -35,6 +35,36 @@ los precios vigentes del catálogo y `Decimal`; este documento no define precios
 - Fuente de Poder: `PSU-COOLERMASTER-650-Gold`
 - Gabinete: `CASE-COR-4000D-AIR`
 
+## gaming-economico
+
+**Nombre**: PC gamer económica
+**Uso**: juegos, videojuegos, gaming, gamer
+**Compatibilidad**: CPU AM4 con GPU dedicada y placa B550 AM4 DDR4; RAM DDR4 de escritorio; SSD M.2 NVMe y disipador indicado para AM4. La GPU PCIe no requiere conector de energía externo según el catálogo. Verificar BIOS, dimensiones, conectores y compatibilidad final con fichas del fabricante.
+
+- Procesador: `CPU-AMD-R5-5600`
+- Placa Madre: `MB-ASUS-B550-PLUS`
+- RAM Desktop: `RAM-D-DDR4-3200-16-CRU`
+- Tarjeta de Video: `GPU-MSI-GTX1650-4G`
+- Almacenamiento: `SSD-M2-NVME-500GB`
+- Refrigeración PC: `COOL-AIR-AG400-BK`
+- Fuente de Poder: `PSU-COOLERMASTER-650-Gold`
+- Gabinete: `CASE-MSI-FORGE-100R`
+
+## gaming-rendimiento
+
+**Nombre**: PC gamer de mayor rendimiento
+**Uso**: juegos, videojuegos, gaming, gamer
+**Compatibilidad**: CPU Ryzen AM4 y placa B550 DDR4; RAM DDR4 de escritorio; SSD M.2 NVMe. GPU PCIe con 12GB; fuente de 750W. Verificar BIOS, dimensiones, conector y consumo de GPU, refrigeración y compatibilidad final con fichas del fabricante.
+
+- Procesador: `CPU-AMD-R5-5600X`
+- Placa Madre: `MB-ASUS-B550-PLUS`
+- RAM Desktop: `RAM-D-DDR4-3600-32-CVL`
+- Tarjeta de Video: `GPU-GIGA-RTX3060-12G`
+- Almacenamiento: `SSD-NVME-KINGSTON-NV2-1000`
+- Refrigeración PC: `COOL-AIR-AG400-BK`
+- Fuente de Poder: `PSU-CORSAIR-750-Gold`
+- Gabinete: `CASE-COR-4000D-AIR`
+
 ## Reglas para adaptar un armado
 
 - Preguntar el presupuesto máximo y el uso si no aparecen en la solicitud.

@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -59,6 +60,8 @@ def trace_event(
     event: str,
     *,
     kind: str = "agent",
+    error_type: str | None = None,
+    sqlstate: str | None = None,
 ) -> None:
     allowed_names = AGENT_NAMES if kind == "agent" else TOOL_NAMES
     if name not in allowed_names or event not in {"start", "success", "error"}:
@@ -72,6 +75,11 @@ def trace_event(
         "kind": kind,
         "event": event,
     }
+    if event == "error":
+        if error_type and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", error_type):
+            record["error_type"] = error_type
+        if sqlstate and re.fullmatch(r"[0-9A-Z]{5}", sqlstate):
+            record["sqlstate"] = sqlstate
     path = _trace_path()
     with _trace_lock:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,8 +98,14 @@ def traced_node(name: str, node: Callable[..., dict[str, Any]], *, root: bool = 
         trace_event(execution_id, name, "start")
         try:
             result = node(state)
-        except Exception:
-            trace_event(execution_id, name, "error")
+        except Exception as exc:
+            trace_event(
+                execution_id,
+                name,
+                "error",
+                error_type=type(exc).__name__,
+                sqlstate=_sqlstate(exc),
+            )
             raise
         trace_event(execution_id, name, "success")
         if root:
@@ -112,8 +126,28 @@ def traced_tool(
     trace_event(execution_id, name, "start", kind="tool")
     try:
         result = operation()
-    except Exception:
-        trace_event(execution_id, name, "error", kind="tool")
+    except Exception as exc:
+        trace_event(
+            execution_id,
+            name,
+            "error",
+            kind="tool",
+            error_type=type(exc).__name__,
+            sqlstate=_sqlstate(exc),
+        )
         raise
     trace_event(execution_id, name, "success", kind="tool")
     return result
+
+
+def _sqlstate(exc: Exception) -> str | None:
+    original = getattr(exc, "orig", None)
+    for candidate in (original, exc):
+        if candidate is None:
+            continue
+        value = getattr(candidate, "sqlstate", None) or getattr(
+            candidate, "pgcode", None
+        )
+        if isinstance(value, str) and re.fullmatch(r"[0-9A-Z]{5}", value):
+            return value
+    return None

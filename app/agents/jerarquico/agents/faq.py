@@ -19,6 +19,28 @@ def _terms(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]{3,}", plain))
 
 
+_FAQ_TOPICS = {
+    "servicios": {"servicio", "servicios", "funciones", "puedes", "hacer", "ayuda", "ayudar", "ofrecen"},
+    "ubicacion": {"ubicacion", "direccion", "donde", "local", "tienda", "presencial", "retiro"},
+    "horario": {"horario", "horarios", "abren", "abierto", "atienden", "atencion", "cuando"},
+    "pagos": {"pago", "pagos", "pagar", "medio", "medios", "transferencia", "tarjeta", "yape", "plin"},
+    "garantia": {"garantia", "garantias", "poliza", "reclamo", "cobertura", "vigencia"},
+    "logistica": {"envio", "envios", "courier", "entrega", "recoger", "recepcion", "retiro", "presencial"},
+    "compras": {"compra", "comprar", "catalogo", "stock", "disponibilidad", "disponible", "precio", "precios", "componente", "repuesto", "ram", "ssd", "gpu", "procesador", "tienen", "hay"},
+    "cotizaciones": {"cotizacion", "cotizar", "presupuesto", "armado", "pc", "gamer", "gaming", "ram", "ssd"},
+}
+_FAQ_TOPIC_HEADINGS = {
+    "servicios": ("servicios disponibles",),
+    "ubicacion": ("ubicacion de la tienda",),
+    "horario": ("horario de atencion",),
+    "pagos": ("pagos",),
+    "garantia": ("garantia",),
+    "logistica": ("retiro y envio",),
+    "compras": ("compras y disponibilidad",),
+    "cotizaciones": ("tarifas y cotizaciones", "servicios disponibles"),
+}
+
+
 class MarkdownFaqRetriever:
     """Small local lexical retriever for approved customer-service facts."""
 
@@ -31,10 +53,27 @@ class MarkdownFaqRetriever:
         content = self.path.read_text(encoding="utf-8")
         sections = re.split(r"(?m)(?=^##\s+)", content)
         query_terms = _terms(query)
+        topic_hits = {
+            topic for topic, aliases in _FAQ_TOPICS.items()
+            if query_terms & aliases
+        }
         ranked = []
         for section in sections:
+            if not section.lstrip().startswith("## "):
+                continue
             section_terms = _terms(section)
+            heading = section.splitlines()[0].casefold()
+            heading_terms = _terms(heading)
             score = len(query_terms & section_terms)
+            score += len(query_terms & heading_terms) * 2
+            score += sum(
+                8
+                for topic in topic_hits
+                if any(
+                    _terms(expected_heading).issubset(heading_terms)
+                    for expected_heading in _FAQ_TOPIC_HEADINGS.get(topic, ())
+                )
+            )
             if score:
                 ranked.append((score, section.strip()))
         ranked.sort(key=lambda result: (-result[0], result[1]))

@@ -2,6 +2,15 @@
 
 ## Objetivo
 
+## Adenda — intención de catálogo para cualquier familia (2026-10-13)
+
+Si el clasificador devuelve `informational` pero el último mensaje pregunta
+explícitamente por disponibilidad, precio, stock o compra, el supervisor deriva
+la búsqueda a ventas usando los términos del mensaje. Esta recuperación cubre
+RAM, SSD, GPU y otras familias, además de procesadores. La consulta sigue siendo
+parametrizada y el inventario/precio provienen exclusivamente de PostgreSQL.
+Si no queda un término de producto identificable, no se inventa uno.
+
 Evitar que las preguntas sobre procesadores/modelos/precios actuales se
 respondan con información recordada o inventada; consultar el inventario real y
 permitir avanzar a una compra. Confirmar además la cobertura RAG de soporte

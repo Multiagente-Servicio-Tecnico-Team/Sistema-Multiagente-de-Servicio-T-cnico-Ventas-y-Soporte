@@ -60,3 +60,29 @@ representados en el grafo, con la limitación indicada para Compras.
   `git diff --check` limpio.
 
 Checkpoint de commit del usuario: ____________________
+
+## Adenda — respaldo de preguntas de disponibilidad (2026-10-13)
+
+- El fallback determinista se generalizó: cuando el modelo clasifica como FAQ
+  una pregunta explícita de catálogo, el último mensaje se reduce a términos
+  de producto y pasa por la consulta de venta contra PostgreSQL.
+- Regresión añadida para «¿Tienen RAM disponible?»: verifica consulta `ram`,
+  listado de dos alternativas y que no se muestran SKU.
+- Validación: suites de workflows jerárquicos, grafo y repositorio, 58 pruebas
+  aprobadas. Las dos pruebas de trazabilidad fallaron al crear `tmp_path` por
+  permisos del directorio temporal de Windows; las demás terminaron bien al
+  usar `.local/pytest-chat-review` como `--basetemp`.
+- PostgreSQL respondió a `SELECT 1`. Las opciones de ocultamiento de entradas y
+  salidas del `.env` local se activaron antes de la prueba real. El smoke test
+  Groq/LangSmith de «¿Tienen RAM disponible?» terminó en
+  `awaiting_inventory_selection` con 20 coincidencias del catálogo; se usó un
+  repositorio que sustituyó la creación del ticket, por lo que no hubo escrituras
+  a PostgreSQL. La traza remota usó inputs/outputs ocultos.
+- Suite final sin llamadas de red: 59 aprobadas con `LANGSMITH_TRACING=false`
+  para el proceso. Dos pruebas de trazabilidad no pudieron preparar `tmp_path`
+  por permisos de Windows.
+- Limitación conservada: armado PC usa los dos perfiles documentados (oficina y
+  gaming); aún no ensambla combinaciones libres ni adapta componentes al
+  presupuesto cuando el perfil del uso solicitado excede el tope. Preferencia
+  confirmada: conservar el uso solicitado y explicar la diferencia de precio;
+  no bajar de perfil automáticamente.

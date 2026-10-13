@@ -56,8 +56,10 @@ if "user_id" not in st.session_state:
                         {
                             "role": "assistant",
                             "content": (
-                                f"Hola, {st.session_state.user_name}. Soy el asistente técnico de TechFix. "
-                                "Cuéntame qué equipo tienes y qué falla presenta. Antes de registrar un ticket, "
+                                f"Hola, {st.session_state.user_name}. Soy TechFix Copilot. "
+                                "Puedo orientarte con soporte y reparaciones, consultar componentes y cotizaciones, "
+                                "ayudarte a armar una PC según tu presupuesto y resolver consultas de garantía "
+                                "o logística. ¿Qué necesitas hoy? Antes de guardar un ticket o cotización, "
                                 "te mostraré el resumen y esperaré tu confirmación."
                             ),
                         }

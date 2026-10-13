@@ -27,6 +27,12 @@ comercial sin conocer SKU ni códigos internos.
    - Calcular el precio total con `Decimal` y datos vigentes de PostgreSQL.
    - Informar las comprobaciones de compatibilidad todavía pendientes; no
      garantizar compatibilidad integral sin datos suficientes.
+   - Mantener el uso que pidió el cliente. Si el perfil verificado supera el
+     presupuesto, explicar el total y cuánto excede el tope; no cambiar a otro
+     perfil de menor rendimiento sin que el cliente lo solicite.
+   - Cuando haya varias configuraciones curadas del mismo uso que quepan en
+     presupuesto, mostrarlas con diferencias claras y permitir elegir por
+     número/nombre, o pedir la más económica/de mayor rendimiento.
 
 3. **Modificación del armado**
    - Antes de aceptar la propuesta, permitir reemplazar RAM u otro componente
@@ -50,11 +56,16 @@ comercial sin conocer SKU ni códigos internos.
   con filas existentes en la BD local.
 - No se generan consultas SQL desde el LLM ni se usa un servidor MCP de SQL
   arbitrario.
+- El armador disponible se limita a perfiles curados; todavía no genera
+  combinaciones libres ni optimiza componentes para encajar automáticamente en
+  cualquier presupuesto.
 - La tabla de proveedores no aporta cotizaciones/plazos verificables.
 - El catálogo no documenta todos los datos físicos de compatibilidad; las
   dimensiones/conectores de GPU, BIOS y revisión del fabricante pueden seguir
   pendientes.
 - El pedido no reserva ni descuenta inventario.
+- Las marcas están incluidas en el nombre/modelo del catálogo actual, por lo
+  que no se requiere una columna `brand` para ofrecer variantes.
 
 ## Criterios de aceptación
 

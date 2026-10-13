@@ -65,3 +65,20 @@ def choose_pc_build_profile(
         ),
     )
     return ranked[0]
+
+
+def profiles_for_use(
+    intended_use: str,
+    profiles: tuple[PCBuildProfile, ...] | None = None,
+) -> tuple[PCBuildProfile, ...]:
+    available = profiles or load_pc_build_profiles()
+    normalized_use = intended_use.casefold()
+    matching = tuple(
+        profile
+        for profile in available
+        if normalized_use
+        and any(use in normalized_use or normalized_use in use for use in profile.uses)
+    )
+    if matching:
+        return matching
+    return (choose_pc_build_profile(intended_use, available),)

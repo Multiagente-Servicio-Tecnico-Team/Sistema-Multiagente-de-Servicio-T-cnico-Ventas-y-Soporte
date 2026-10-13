@@ -4,6 +4,8 @@ from app.agents.jerarquico.graph.state import ServiceState
 
 
 def after_supervisor(state: ServiceState) -> str:
+    if state.get("capabilities_response"):
+        return END
     return {
         "service": "technical_team_supervisor",
         "informational": "faq_agent",
@@ -16,6 +18,7 @@ def after_supervisor(state: ServiceState) -> str:
         "inventory_selection": "warehouse_agent",
         "diagnosis_only": "warehouse_agent",
         "awaiting_inventory_selection": END,
+        "awaiting_build_selection": END,
         "awaiting_confirmation": END,
         "declined": END,
         "clarification": END,

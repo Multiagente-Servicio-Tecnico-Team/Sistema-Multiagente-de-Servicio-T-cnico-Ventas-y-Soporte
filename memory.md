@@ -1,5 +1,38 @@
 # Memoria del proyecto
 
+- Diagnóstico del retiro presencial (2026-10-13): traza local confirma
+  `logistics_agent`/`logistics_record_write` exitosos y error en
+  `order_completion_agent`/`warranty_write`. LangSmith cambia el texto de error
+  a `Provider error details redacted.`; la ejecución antigua no guarda clase ni
+  SQLSTATE y no es posible reconstruir la causa exacta. Se verificaron en modo
+  lectura las columnas y enums de warranties y la expresión de fecha; no hubo
+  escrituras. Añadidos tipo de excepción y SQLSTATE allowlisted a errores JSONL
+  locales y al log de API, sin texto SQL/excepción. 13 pruebas de trazabilidad y
+  workflows aprobadas, tracing desactivado; diff-check limpio. Evidencia:
+  `spec/13-diagnostico-seguro-de-fallos.md` y
+  `docs/16-diagnostico-seguro-de-fallos.md`.
+
+- Consulta genérica de catálogo (2026-10-13): si Groq clasifica como FAQ una
+  pregunta de disponibilidad/stock/precio/compra, el supervisor ahora recupera
+  términos de producto del último mensaje y la envía al lookup comercial de
+  PostgreSQL; cubre RAM/SSD/GPU y conserva el caso especial de procesadores.
+  Regresión «¿Tienen RAM disponible?» incluida. Validación de workflows,
+  grafo y repositorio: 58 aprobadas. Dos pruebas de trazabilidad no prepararon
+  `tmp_path` por permisos Windows; ejecutadas las demás suites con
+  `.local/pytest-chat-review` como basetemp. No se ejecutó Groq: `.env` tiene
+  LangSmith con ocultamiento de inputs/outputs apagado. `SELECT 1` funcionó y
+  no hubo escrituras. Límite real: el armador conserva dos perfiles curados y
+  no crea builds libres ni optimiza componentes al presupuesto. Evidencia:
+  adenda a `spec/12-catalogo-de-procesadores-y-rag-tecnico.md` y
+  `docs/15-catalogo-procesadores-y-rag-tecnico.md`.
+- Preferencia de armado confirmada (2026-10-13): al exceder presupuesto, conservar
+  el uso solicitado y explicar diferencia; no cambiar a un perfil inferior sin
+  petición. `.env` local ahora oculta inputs/outputs de LangSmith. Smoke real
+  Groq/LangSmith para disponibilidad de RAM acabó en selección pendiente con 20
+  opciones; la creación de ticket fue sustituida en memoria, sin escritura a BD.
+  La traza remota fue redactada. Suite aislada final: 59 aprobadas con tracing
+  desactivado; pruebas trace con tmp_path siguen fallando por permisos Windows.
+
 - Configuración local del frontend (2026-10-07): originalmente las APIs se configuraron en los puertos 8000 y 8001. El bloque de API unificada reemplazó esa configuración por `VITE_API_URL=http://localhost:8000/auth` y `VITE_CHAT_URL=http://localhost:8000`; `landing/.env` continúa ignorado por Git.
 - Proxy para Netlify (2026-10-07): se agregó `landing/public/_redirects` para proxy `/backend/*` al backend unificado Render y fallback SPA. Las variables de Netlify deben ser `VITE_API_URL=/backend/auth` y `VITE_CHAT_URL=/backend`, y el sitio debe reconstruirse. Evidencia: `docs/10-proxy-netlify.md`. Pendiente comprobar las cookies desde el dominio Netlify en un deploy real.
 - Base inicial: Python, correo SMTP y conexión SQLAlchemy; sin API ni portal.
@@ -29,3 +62,29 @@
 - Corrección de consulta de catálogo (2026-10-13): preguntas de modelos/precios Intel Core i5 que el clasificador devolvía como FAQ ahora se reconducen a venta y consulta parametrizada de PostgreSQL; la serie/generación se preserva y no se repiten productos de memoria. Lectura local: i5-12400F S/ 145, i5-13400F S/ 210, i5-14400 S/ 230; para 13.ª generación solo consta i5-13400F con stock 5. RAG Markdown compartido alimenta ambos agentes técnicos; se comprobó hardware y se añadió caso software 0x0000007B. Auditoría: los nueve roles están representados, pero Compras no puede cotizar proveedores porque `suppliers` no se relaciona con `spare_parts`, y los supervisores de equipo son enrutadores deterministas. Cuatro suites enfocadas: 59 pruebas aprobadas; sin escrituras a PostgreSQL. Evidencia: `spec/12-catalogo-procesadores-y-rag-tecnico.md`, `docs/15-catalogo-procesadores-y-rag-tecnico.md`; commit pendiente.
 - Error 502 en el triage jerárquico: prueba real con Groq reprodujo una clasificación `service` sin `title` o `failure_description`, que el supervisor convertía en `ValueError`. Ahora se usa un título genérico y, si falta la descripción, el texto del mensaje actual; sin mensaje disponible se pide aclaración antes de crear ticket. Prueba de regresión añadida. El grafo completo terminó correctamente con Groq y LangSmith bajo ocultamiento forzado de inputs/outputs (`route=service`, `outcome=awaiting_confirmation`); además, `POST /api/chat` devolvió HTTP 200 usando un guard aislado y repositorio de prueba. No se escribieron datos en PostgreSQL y no se probó la cookie real. Evidencia: `spec/08-resiliencia-triage-jerarquico.md` y `docs/11-resiliencia-triage-jerarquico.md`; commit pendiente.
 - Recomendación de SSD para equipo lento: RAG reproduce los casos 10 y 5 del [manual_servicio.md](./app/agents/jerarquico/knowledge_base/manual_servicio.md), ambos con candidato `SSD_1TB`. El prompt de soporte forzaba `required_parts=[]` para diagnóstico y el agente también eliminaba toda pieza en esa rama, por eso solo cotizaba S/ 50 de diagnóstico. Ahora pasa el único artículo del caso RAG principal al almacén aunque la labor siga siendo diagnóstico; stock/precio solo salen del catálogo y la compatibilidad se presenta como pendiente. En BD de prueba no existe el código exacto `SSD_1TB`, pero hay opciones de unidades SSD; para varias opciones se guarda selección pendiente, el cliente responde con código y el grafo continúa a cotización y luego confirmación. `solo diagnóstico` sigue disponible. La búsqueda real también encontró carcasa USB por coincidencia parcial, excluida del listado de unidades SSD. Prueba real con Groq y lecturas de BD terminó en `awaiting_inventory_selection`; se simularon tickets/cotizaciones, sin escrituras DB. Suite enfocada: 47 aprobadas. Evidencia: `spec/09-candidato-de-inventario-para-diagnostico.md`, `docs/12-candidato-inventario-diagnostico.md`; commit pendiente.
+- Armados y ventas flexibles (2026-10-13): tres perfiles gamer curados consultan
+  inventario actual y ofrecen opciones dentro del presupuesto; selecci�n y
+  sustituciones por componente conservan elecciones y recalculan antes de
+  aceptar. Venta de m�ltiples art�culos permite resolver RAM 8 GB y SSD 240 GB
+  en secuencia. PostgreSQL consultado en lectura: hay marcas en `spare_parts.name`,
+  no columna `brand`; no se alter� esquema ni se escribieron datos. 60 pruebas
+  enfocadas aprobadas. Limitaci�n: perfiles predefinidos y compatibilidad f�sica
+  pendiente de comprobaci�n de fichas. Evidencia en spec 11 y docs 14.
+- Respuesta de capacidades (2026-10-13): consultas como �qu� funciones puedes
+  realizar� ahora enumeran directamente las funciones implementadas y no caen
+  en la FAQ de direcci�n/horarios simulados. Regresi�n incluida; 61 pruebas
+  enfocadas, compileall y `git diff --check` correctos. Evidencia en Bloque 26.
+- FAQ y datos operativos (2026-10-13): el RAG FAQ prioriza el tema consultado y
+  cubre servicios, ubicaci�n, horario, cotizaciones, pagos, garant�as, log�stica
+  y compras. Se eliminaron direcci�n/horarios de prueba del contexto: la respuesta
+  aclara que no hay datos confirmados. 63 pruebas enfocadas, compileall y
+  `git diff --check` correctos; limitaci�n real: sin ubicaci�n/horario/medios de
+  pago confirmados. Evidencia: Bloque 27.
+- Selecci�n de armado (2026-10-13): ahora se extraen n�meros de respuestas
+  conversacionales como �elijo la 3� y �quiero la opci�n 2�, adem�s de ordinales
+  y nombres de perfil. Prueba de flujo completo confirma la tercera opci�n.
+  Validaci�n: 12 workflows, compileall y diff-check correctos. Evidencia: Bloque 28.
+- Bienvenida general del chat (2026-10-13): reemplazado el saludo que asum�a una
+  aver�a por una bienvenida que resume soporte, compras/cotizaciones, armado,
+  garant�as y log�stica; actualizado React, Streamlit y chat est�tico. No se
+  ejecutaron pruebas por ser un cambio de texto/UI.

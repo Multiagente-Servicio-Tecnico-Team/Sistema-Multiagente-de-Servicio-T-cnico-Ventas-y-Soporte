@@ -26,6 +26,7 @@ class ServiceState(TypedDict, total=False):
         "inventory_selection",
         "diagnosis_only",
         "awaiting_inventory_selection",
+        "awaiting_build_selection",
     ]
     team: Literal["commercial", "technical", "operations"]
     request_type: str
@@ -41,6 +42,9 @@ class ServiceState(TypedDict, total=False):
     budget_max: Decimal | None
     intended_use: str
     build_profile_id: str
+    selected_build_profile_id: str
+    build_options: list[dict[str, Any]]
+    awaiting_build_selection: bool
     build_compatibility_notes: str
     awaiting_build_budget: bool
     inventory_selection_replaces_category: str
@@ -52,6 +56,7 @@ class ServiceState(TypedDict, total=False):
     inventory_options: list[dict[str, Any]]
     rag_documents: list[dict[str, Any]]
     faq_context: str
+    capabilities_response: bool
     warranty_code: str
     warranty_id: int | None
     warranty_status: str

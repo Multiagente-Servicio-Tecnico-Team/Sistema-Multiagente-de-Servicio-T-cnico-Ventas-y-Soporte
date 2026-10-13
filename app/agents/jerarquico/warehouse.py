@@ -435,7 +435,7 @@ def _lookup_commercial_items(
             else traced_tool(
                 state,
                 "inventory_lookup",
-                lambda: repository.find_catalog_items(search_term),
+                lambda: repository.find_catalog_items(search_term, limit=8),
             )
         )
         usable = [
@@ -550,61 +550,212 @@ def _lookup_pc_build(
             "awaiting_inventory_selection": False,
         }
 
+    if state.get("route") == "confirm" and state.get("matched_parts"):
+        refreshed_parts: list[dict[str, Any]] = []
+        for current in state["matched_parts"]:
+            item = traced_tool(
+                state,
+                "inventory_lookup",
+                lambda code=current["code"]: repository.find_spare_part_by_code(code),
+            )
+            quantity = int(current["quantity"])
+            if (
+                item is None
+                or item.get("category") != current.get("category")
+                or int(item["current_stock"]) < quantity
+                or Decimal(str(item["unit_price"])) <= 0
+            ):
+                return {
+                    "outcome": "inventory_unavailable",
+                    "awaiting_quote_confirmation": False,
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                "Uno de los componentes del armado cambió de stock "
+                                "o dejó de tener precio válido. No guardaré la "
+                                "cotización hasta revisar de nuevo las opciones."
+                            )
+                        )
+                    ],
+                }
+            refreshed_parts.append(_commercial_part(item, quantity))
+        refreshed_total = sum(
+            (part["unit_price"] * part["quantity"] for part in refreshed_parts),
+            Decimal("0.00"),
+        ) + (labor_cost or Decimal("0.00"))
+        budget = state.get("budget_max")
+        if budget is not None and refreshed_total > Decimal(str(budget)):
+            return {
+                "outcome": "build_over_budget",
+                "awaiting_build_budget": True,
+                "messages": [
+                    AIMessage(
+                        content=(
+                            f"La configuración actualizada suma S/ {refreshed_total:.2f}, "
+                            f"por encima del tope de S/ {Decimal(str(budget)):.2f}. "
+                            "Mantengo el uso solicitado; puedes revisar el presupuesto "
+                            "o pedir otro cambio."
+                        )
+                    )
+                ],
+            }
+        return {"outcome": "inventory_confirmed", "matched_parts": refreshed_parts}
+
     try:
         from app.agents.jerarquico.pc_build_profiles import (
-            choose_pc_build_profile,
             load_pc_build_profiles,
+            profiles_for_use,
         )
 
-        profile = choose_pc_build_profile(
+        profiles = profiles_for_use(
             state.get("intended_use", ""),
             load_pc_build_profiles(),
         )
     except (OSError, ValueError) as exc:
         raise RuntimeError("No se pudieron cargar los perfiles de armado.") from exc
 
-    parts: list[dict[str, Any]] = []
-    missing: list[str] = []
-    for category, code in profile.components:
-        item = traced_tool(
-            state,
-            "inventory_lookup",
-            lambda code=code: repository.find_spare_part_by_code(code),
-        )
-        if (
-            item is None
-            or item.get("category") != category
-            or Decimal(str(item["unit_price"])) <= 0
-            or int(item["current_stock"]) < 1
-        ):
-            missing.append(category)
+    profile_by_id = {profile.identifier: profile for profile in profiles}
+    selected_profile_id = state.get("selected_build_profile_id", "")
+    if selected_profile_id and selected_profile_id not in profile_by_id:
+        return {
+            "outcome": "inventory_unavailable",
+            "messages": [AIMessage(content="No pude recuperar la configuración seleccionada. Indica de nuevo el uso de la PC.")],
+        }
+
+    catalog_options: list[dict[str, Any]] = []
+    for profile in profiles:
+        parts: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for category, code in profile.components:
+            item = traced_tool(
+                state,
+                "inventory_lookup",
+                lambda code=code: repository.find_spare_part_by_code(code),
+            )
+            if (
+                item is None
+                or item.get("category") != category
+                or Decimal(str(item["unit_price"])) <= 0
+                or int(item["current_stock"]) < 1
+            ):
+                missing.append(category)
+                continue
+            parts.append(_commercial_part(item, 1))
+        if missing:
             continue
-        parts.append(_commercial_part(item, 1))
-    if missing:
+        parts_total = sum(
+            (part["unit_price"] * part["quantity"] for part in parts),
+            Decimal("0.00"),
+        )
+        total = parts_total + (labor_cost or Decimal("0.00"))
+        catalog_options.append(
+            {"profile": profile, "parts": parts, "total": total}
+        )
+
+    if not catalog_options:
         return {
             "outcome": "inventory_unavailable",
             "awaiting_quote_confirmation": False,
             "messages": [
                 AIMessage(
                     content=(
-                        "No puedo cotizar el perfil recomendado porque faltan "
-                        "artículos con precio y stock suficientes en estas "
-                        f"categorías: {', '.join(missing)}. No agregué productos "
-                        "ni inventé precios."
+                        "No encontré un armado completo con precio y stock "
+                        "suficientes para el uso pedido. No agregué productos ni "
+                        "inventé precios."
                     )
                 )
             ],
         }
     budget = state.get("budget_max")
-    parts_total = sum(
-        (
-            part["unit_price"] * part["quantity"]
-            for part in parts
-        ),
-        Decimal("0.00"),
-    )
-    total_with_labor = parts_total + (labor_cost or Decimal("0.00"))
-    if budget is not None and total_with_labor > Decimal(str(budget)):
+    budget = Decimal(str(budget)) if budget is not None else None
+    catalog_options.sort(key=lambda option: (option["total"], option["profile"].identifier))
+    fitting = [
+        option
+        for option in catalog_options
+        if budget is None or option["total"] <= budget
+    ]
+    if selected_profile_id:
+        selected = next(
+            (option
+            for option in catalog_options
+            if option["profile"].identifier == selected_profile_id),
+            None,
+        )
+        if selected is None:
+            return {
+                "outcome": "inventory_unavailable",
+                "messages": [
+                    AIMessage(
+                        content=(
+                            "La configuración seleccionada ya no tiene stock o "
+                            "precio suficientes. Elige otra opción disponible."
+                        )
+                    )
+                ],
+            }
+        if budget is not None and selected["total"] > budget:
+            gap = selected["total"] - budget
+            return {
+                "route": "pc_build",
+                "outcome": "build_over_budget",
+                "awaiting_build_budget": True,
+                "messages": [
+                    AIMessage(
+                        content=(
+                            f"La configuración {selected['profile'].title} ahora "
+                            f"suma S/ {selected['total']:.2f}, S/ {gap:.2f} por "
+                            f"encima de tu tope de S/ {budget:.2f}. Mantengo el "
+                            "uso gamer; puedes ajustar el presupuesto o pedir un "
+                            "cambio concreto de componente."
+                        )
+                    )
+                ],
+            }
+    elif len(fitting) > 1:
+        options = [
+            {
+                "code": candidate["profile"].identifier,
+                "name": candidate["profile"].title,
+                "total": candidate["total"],
+            }
+            for candidate in fitting
+        ]
+        descriptions = []
+        for index, (candidate, option) in enumerate(zip(fitting, options), 1):
+            graphics = next(
+                (part["name"] for part in candidate["parts"] if part["category"] == "Tarjeta de Video"),
+                "gráficos integrados",
+            )
+            memory = next(
+                (part["name"] for part in candidate["parts"] if part["category"].startswith("RAM")),
+                "memoria",
+            )
+            descriptions.append(
+                f"{index}. {option['name']} — {graphics}; {memory}; "
+                f"total S/ {option['total']:.2f} (incluye ensamble)."
+            )
+        return {
+            "route": "awaiting_build_selection",
+            "outcome": "awaiting_build_selection",
+            "awaiting_build_selection": True,
+            "build_options": options,
+            "messages": [
+                AIMessage(
+                    content=(
+                        "Encontré estas configuraciones para juegos dentro de tu "
+                        f"presupuesto de S/ {budget:.2f}:\n"
+                        + "\n".join(descriptions)
+                        + "\nElige por número o nombre. Después podrás cambiar RAM, "
+                        "almacenamiento u otro componente; recalcularé el total "
+                        "antes de pedir tu aceptación. Los precios y existencias "
+                        "se consultaron ahora en el catálogo."
+                    )
+                )
+            ],
+        }
+    elif not fitting:
+        closest = catalog_options[0]
+        gap = closest["total"] - budget if budget is not None else Decimal("0.00")
         return {
             "route": "pc_build",
             "outcome": "build_over_budget",
@@ -613,15 +764,21 @@ def _lookup_pc_build(
             "messages": [
                 AIMessage(
                     content=(
-                        f"El perfil {profile.title} tiene un total actual de "
-                        f"S/ {total_with_labor:.2f}, incluida la mano de obra; "
-                        f"supera tu presupuesto de S/ {Decimal(str(budget)):.2f}. "
-                        "Puedes indicarme un nuevo presupuesto o cambiar el uso "
-                        "principal. Aún no guardé la cotización."
+                        f"La configuración gamer más económica disponible, "
+                        f"{closest['profile'].title}, suma S/ {closest['total']:.2f} "
+                        f"incluido el ensamble: excede tu tope de S/ {budget:.2f} "
+                        f"por S/ {gap:.2f}. Mantengo el uso para juegos; puedes "
+                        "ajustar el presupuesto o indicarme componentes concretos "
+                        "que quieres cambiar. Aún no guardé la cotización."
                     )
                 )
             ],
         }
+    else:
+        selected = fitting[0]
+
+    profile = selected["profile"]
+    parts = selected["parts"]
     return {
         "route": (
             "confirm" if state.get("route") == "confirm" else "pc_build"
@@ -629,8 +786,11 @@ def _lookup_pc_build(
         "outcome": "inventory_confirmed",
         "matched_parts": parts,
         "build_profile_id": profile.identifier,
+        "selected_build_profile_id": profile.identifier,
         "build_compatibility_notes": profile.compatibility_notes,
         "pending_commercial_requests": [],
         "inventory_substitutions": [],
         "awaiting_build_budget": False,
+        "awaiting_build_selection": False,
+        "build_options": [],
     }

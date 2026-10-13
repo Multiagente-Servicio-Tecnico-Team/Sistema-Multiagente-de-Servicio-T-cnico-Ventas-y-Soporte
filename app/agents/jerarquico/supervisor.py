@@ -21,7 +21,7 @@ def _normalize_choice(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", normalized).strip()
 
 
-def _processor_catalog_search_term(message: str) -> str | None:
+def _catalog_search_term(message: str) -> str | None:
     normalized = _normalize_choice(message)
     catalog_intent = (
         "catalogo",
@@ -32,38 +32,59 @@ def _processor_catalog_search_term(message: str) -> str | None:
         "precios",
         "modelos",
         "opciones",
+        "hay",
         "comprar",
         "compra",
         "venden",
         "tienen",
     )
-    processor_query = any(
-        term in normalized
-        for term in ("procesador", "cpu", "intel", "core", "ryzen")
-    )
-    if not processor_query or not any(
+    if not any(
         term in normalized.split() for term in catalog_intent
     ):
         return None
 
-    series = re.search(r"\bi[3579]\b", normalized)
-    model = re.search(r"\bi[3579]\s+(\d{4,5}[a-z]{0,2})\b", normalized)
-    generation = re.search(
-        r"\b(1[0-9])(?:\s*(?:a|o|th))?\s+(?:generacion|gen)\b",
-        normalized,
-    )
-    search_terms = ["procesador"]
-    if series:
-        search_terms.append(series.group(0))
-    elif "intel" in normalized:
-        search_terms.append("intel")
-    elif "ryzen" in normalized:
-        search_terms.append("ryzen")
-    if model:
-        search_terms.append(model.group(1))
-    elif generation:
-        search_terms.append(generation.group(1))
-    return " ".join(search_terms)
+    # The LLM occasionally classifies availability questions as FAQs. For an
+    # explicit catalog intent, derive a bounded search phrase from the latest
+    # customer turn so live availability and prices always come from SQL.
+    noise = {
+        "a", "al", "algun", "alguna", "algunos", "algunas",
+        "articulo", "articulos", "busco", "catalogo", "componente", "componentes",
+        "con", "cuanto", "cuantos", "cuantas", "de", "del", "dime", "disponible",
+        "disponibles", "disponibilidad", "el", "en", "hay", "la", "las", "lo",
+        "los", "me", "modelo", "modelos", "necesito", "opcion", "opciones", "para",
+        "por", "precio", "precios", "que", "quisiera", "tienen", "tiene", "un",
+        "una", "unas", "unos", "venden", "vende", "ver", "quiero", "stock",
+        "comprar", "compra", "cotizar", "cotiza", "cotizame", "mantenimiento",
+        "reparacion", "diagnostico", "soporte", "servicio", "servicios",
+    }
+    tokens = [token for token in normalized.split() if token not in noise]
+    if tokens and all(len(token) == 1 for token in tokens):
+        return None
+    # Preserve the established processor query shape, including series and
+    # generation, while allowing the same fallback for RAM, SSDs, GPUs, etc.
+    if any(
+        token in {"procesador", "procesadores", "cpu", "cpus", "intel", "core", "ryzen"}
+        for token in tokens
+    ):
+        series = re.search(r"\bi[3579]\b", normalized)
+        model = re.search(r"\bi[3579]\s+(\d{4,5}[a-z]{0,2})\b", normalized)
+        generation = re.search(
+            r"\b(1[0-9])(?:\s*(?:a|o|th))?\s+(?:generacion|gen)\b",
+            normalized,
+        )
+        processor_terms = ["procesador"]
+        if series:
+            processor_terms.append(series.group(0))
+        elif "intel" in tokens or "intel" in normalized.split():
+            processor_terms.append("intel")
+        elif "ryzen" in tokens:
+            processor_terms.append("ryzen")
+        if model:
+            processor_terms.append(model.group(1))
+        elif generation:
+            processor_terms.append(generation.group(1))
+        return " ".join(processor_terms)
+    return " ".join(tokens[:8]) or None
 
 
 def _select_inventory_option(message: str, options: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -74,9 +95,17 @@ def _select_inventory_option(message: str, options: list[dict[str, Any]]) -> dic
     ]
     if len(code_matches) == 1:
         return code_matches[0]
-    number_match = re.fullmatch(r"(?:opcion\s*)?(\d{1,2})", normalized) or re.search(
-        r"\b(?:opcion|numero)\s*(\d{1,2})\b",
-        normalized,
+    selection_intent = bool(
+        re.search(
+            r"\b(?:elijo|escojo|selecciono|seleccionar|quiero|prefiero|elijo|dame|escoja)\b|\bme quedo con\b|\bvoy con\b",
+            normalized,
+        )
+    )
+    numeric_matches = list(re.finditer(r"\b(\d{1,2})\b", normalized))
+    number_match = (
+        numeric_matches[-1]
+        if numeric_matches and (selection_intent or len(numeric_matches) == 1)
+        else re.search(r"\b(?:opcion|numero)\s*(\d{1,2})\b", normalized)
     )
     ordinals = {
         "primera": 1, "primero": 1, "uno": 1, "una": 1,
@@ -84,6 +113,11 @@ def _select_inventory_option(message: str, options: list[dict[str, Any]]) -> dic
         "tercera": 3, "tercero": 3, "tres": 3,
         "cuarta": 4, "cuarto": 4, "cuatro": 4,
         "quinta": 5, "quinto": 5, "cinco": 5,
+        "sexta": 6, "sexto": 6, "seis": 6,
+        "septima": 7, "septimo": 7, "siete": 7,
+        "octava": 8, "octavo": 8, "ocho": 8,
+        "novena": 9, "noveno": 9, "nueve": 9,
+        "decima": 10, "decimo": 10, "diez": 10,
     }
     index = int(number_match.group(1)) if number_match else next(
         (number for word, number in ordinals.items() if re.search(rf"\b{word}\b", normalized)),
@@ -95,6 +129,9 @@ def _select_inventory_option(message: str, options: list[dict[str, Any]]) -> dic
     meaningful_terms = message_terms - {
         "la", "el", "de", "del", "quiero", "esa", "ese", "esta", "este",
         "opcion", "opciones", "por", "favor", "dame", "me", "sirve",
+        "elijo", "escojo", "selecciono", "seleccionar", "quiero", "prefiero",
+        "quedo", "con", "voy", "numero", "tercera", "tercero", "primera",
+        "primero", "segunda", "segundo", "cuarta", "cuarto", "quinta", "quinto",
     }
     if meaningful_terms:
         matches = [
@@ -121,6 +158,92 @@ def make_customer_care_supervisor(llm: Any, repository: ServiceRepository):
     def customer_care_supervisor(state: ServiceState) -> dict[str, Any]:
         if state.get("awaiting_logistics"):
             return {"route": "logistics"}
+
+        latest_customer_message = next(
+            (
+                message.content.strip()
+                for message in reversed(state["messages"])
+                if isinstance(message, HumanMessage)
+                and isinstance(message.content, str)
+                and message.content.strip()
+            ),
+            "",
+        )
+        normalized_latest = _normalize_choice(latest_customer_message)
+        capabilities_question = bool(
+            re.search(
+                r"\b(?:que|cuales?)\b.{0,45}\b(?:funciones|puedes hacer|puedo hacer|servicios|ayuda|capacidades)\b|\bpara que sirves\b",
+                normalized_latest,
+            )
+        )
+        if capabilities_question:
+            return {
+                "route": "informational",
+                "outcome": "informational",
+                "capabilities_response": True,
+                "messages": [
+                    AIMessage(
+                        content=(
+                            "Puedo ayudarte a:\n"
+                            "• Diagnosticar de forma preliminar fallas de hardware y software, y registrar solicitudes de reparación o soporte.\n"
+                            "• Consultar disponibilidad, precio y alternativas de componentes del catálogo, y preparar una cotización.\n"
+                            "• Proponer una PC para oficina/estudio o gaming según tu presupuesto, permitir cambios de componentes y recalcular antes de que aceptes.\n"
+                            "• Consultar garantías y registrar reclamos, además de guardar tu preferencia de retiro presencial o envío.\n\n"
+                            "Dime qué necesitas hacer y te guío paso a paso. Las cotizaciones e inventario se verifican al momento; la evaluación técnica puede requerir revisar el equipo."
+                        )
+                    )
+                ],
+            }
+
+        if state.get("awaiting_build_selection"):
+            latest_message = next(
+                (
+                    message.content.strip()
+                    for message in reversed(state["messages"])
+                    if isinstance(message, HumanMessage)
+                    and isinstance(message.content, str)
+                    and message.content.strip()
+                ),
+                "",
+            )
+            build_options = state.get("build_options", [])
+            if any(
+                phrase in _normalize_choice(latest_message)
+                for phrase in ("mas economica", "mas barata", "menor precio")
+            ):
+                selected_build = min(build_options, key=lambda option: option["total"])
+            elif any(
+                phrase in _normalize_choice(latest_message)
+                for phrase in ("mas potente", "mejor rendimiento", "mayor rendimiento")
+            ):
+                selected_build = max(build_options, key=lambda option: option["total"])
+            else:
+                selected_build = _select_inventory_option(latest_message, build_options)
+            if selected_build is None:
+                choices = "\n".join(
+                    f"{index}. {option['name']} — S/ {option['total']:.2f}"
+                    for index, option in enumerate(build_options, 1)
+                )
+                return {
+                    "route": "awaiting_build_selection",
+                    "outcome": "awaiting_build_selection",
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                "Elige una de estas configuraciones por número o "
+                                f"nombre:\n{choices}"
+                            )
+                        )
+                    ],
+                }
+            return {
+                "route": "pc_build",
+                "outcome": "pending",
+                "awaiting_build_selection": False,
+                "selected_build_profile_id": selected_build["code"],
+                "build_profile_id": selected_build["code"],
+                "build_options": [],
+            }
 
         if state.get("awaiting_build_budget"):
             decision = llm.with_structured_output(
@@ -287,7 +410,8 @@ def make_customer_care_supervisor(llm: Any, repository: ServiceRepository):
                     state,
                     "inventory_lookup",
                     lambda: repository.find_catalog_items(
-                        confirmation.modification_term
+                        confirmation.modification_term,
+                        limit=8,
                     ),
                 )
                 candidates = [
@@ -513,18 +637,16 @@ def make_customer_care_supervisor(llm: Any, repository: ServiceRepository):
             ),
             "",
         )
-        processor_search_term = _processor_catalog_search_term(
-            latest_customer_message
-        )
-        if decision.route == "informational" and processor_search_term:
+        catalog_search_term = _catalog_search_term(latest_customer_message)
+        if decision.route == "informational" and catalog_search_term:
             decision = decision.model_copy(
                 update={
                     "route": "sale",
                     "request_type": "SALE",
-                    "title": "Consulta de compra de procesador",
+                    "title": "Consulta de disponibilidad de catálogo",
                     "failure_description": latest_customer_message,
                     "required_parts": [
-                        PartRequest(search_term=processor_search_term, quantity=1)
+                        PartRequest(search_term=catalog_search_term, quantity=1)
                     ],
                     "informational_response": None,
                 }

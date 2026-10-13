@@ -1,6 +1,7 @@
 """Authenticated chat API for selecting and tracing the LangGraph patterns."""
 
 import logging
+import re
 from contextlib import AbstractContextManager, nullcontext
 from threading import Lock, RLock
 from typing import Any, Callable
@@ -394,9 +395,19 @@ def create_app(
                     message,
                 )
             except (SQLAlchemyError, OSError) as exc:
+                origin = getattr(exc, "orig", None)
+                sqlstate = (
+                    getattr(origin, "sqlstate", None)
+                    or getattr(origin, "pgcode", None)
+                )
+                if not isinstance(sqlstate, str) or not re.fullmatch(
+                    r"[0-9A-Z]{5}", sqlstate
+                ):
+                    sqlstate = "unavailable"
                 logger.error(
-                    "Pattern database or storage operation failed: %s",
+                    "Pattern database or storage operation failed: %s; SQLSTATE=%s",
                     type(exc).__name__,
+                    sqlstate,
                 )
                 raise HTTPException(
                     status_code=503,
