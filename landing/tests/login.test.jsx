@@ -23,8 +23,8 @@ function renderLogin(api, initialEntries = ["/portal/acceso"]) {
   );
 }
 
-describe("inicio de sesión", () => {
-  it("valida el correo antes de llamar a la API", async () => {
+describe("sign-in", () => {
+  it("validates the email before calling the API", async () => {
     const api = { mode: "api", login: vi.fn() };
     const user = userEvent.setup();
     renderLogin(api);
@@ -37,7 +37,7 @@ describe("inicio de sesión", () => {
     expect(api.login).not.toHaveBeenCalled();
   });
 
-  it("inicia sesión, redirige y guarda solo datos públicos", async () => {
+  it("signs in, redirects and stores only public data", async () => {
     const api = { mode: "api", login: vi.fn().mockResolvedValue({ nombre: "Ana Torres", email: "ana@demo.pe" }) };
     const user = userEvent.setup();
     renderLogin(api);
@@ -51,7 +51,7 @@ describe("inicio de sesión", () => {
     expect(sessionStorage.getItem("techfix.session")).not.toContain("Secreta");
   });
 
-  it("muestra el error de credenciales y permite reintentar", async () => {
+  it("shows the credentials error and allows retrying", async () => {
     const api = { mode: "api", login: vi.fn().mockRejectedValue(new ApiError(MESSAGES.invalidCredentials, { status: 401 })) };
     const user = userEvent.setup();
     renderLogin(api);
@@ -64,7 +64,7 @@ describe("inicio de sesión", () => {
     expect(screen.getByRole("button", { name: /iniciar sesión/i })).toBeEnabled();
   });
 
-  it("vuelve a la página protegida solicitada después de iniciar sesión", async () => {
+  it("returns to the requested protected page after signing in", async () => {
     const api = { mode: "api", login: vi.fn().mockResolvedValue({ nombre: "Ana", email: "ana@demo.pe" }) };
     const user = userEvent.setup();
     render(
@@ -86,7 +86,7 @@ describe("inicio de sesión", () => {
   });
 });
 
-describe("rol devuelto por el backend", () => {
+describe("role returned by the backend", () => {
   function renderPage(page, api) {
     const form = page === "staff"
       ? <LoginForm role="staff" badge="" title="Taller" subtitle="" defaultTo="/taller" footer={null} api={api} />
@@ -110,7 +110,7 @@ describe("rol devuelto por el backend", () => {
     await user.click(screen.getByRole("button", { name: /iniciar sesión/i }));
   }
 
-  it("un técnico que entra por el portal va al panel del taller", async () => {
+  it("a technician signing in through the portal goes to the workshop panel", async () => {
     const api = { mode: "api", login: vi.fn().mockResolvedValue({ nombre: "Carlos", apellido: "Ríos", email: "persona@taller.com", rol: "TECHNICIAN" }), logout: vi.fn() };
     const user = userEvent.setup();
     renderPage("client", api);
@@ -120,7 +120,7 @@ describe("rol devuelto por el backend", () => {
     expect(JSON.parse(sessionStorage.getItem("techfix.session"))).toEqual({ role: "staff", email: "persona@taller.com", name: "Carlos Ríos" });
   });
 
-  it("un cliente no puede entrar al panel del taller y se cierra su sesión en el servidor", async () => {
+  it("a customer cannot enter the workshop panel and the server session is closed", async () => {
     const api = { mode: "api", login: vi.fn().mockResolvedValue({ nombre: "Ana", apellido: null, email: "persona@taller.com", rol: "CUSTOMER" }), logout: vi.fn().mockResolvedValue() };
     const user = userEvent.setup();
     renderPage("staff", api);
@@ -132,8 +132,8 @@ describe("rol devuelto por el backend", () => {
   });
 });
 
-describe("navegación desde la landing", () => {
-  it("el botón Iniciar sesión de la landing lleva al acceso del portal", async () => {
+describe("navigation from the landing", () => {
+  it("the landing Iniciar sesión button goes to the portal sign-in", async () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={["/"]}>
@@ -147,7 +147,7 @@ describe("navegación desde la landing", () => {
     expect(await screen.findByRole("heading", { name: "Acceder a mi Portal de Servicio" })).toBeInTheDocument();
   });
 
-  it("una ruta protegida sin sesión redirige al acceso", async () => {
+  it("a protected route without a session redirects to sign-in", async () => {
     render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={["/portal/tickets"]}>
         <StoreProvider>
@@ -158,7 +158,7 @@ describe("navegación desde la landing", () => {
     expect(await screen.findByRole("heading", { name: "Acceder a mi Portal de Servicio" })).toBeInTheDocument();
   });
 
-  it("desde el acceso se llega al registro", async () => {
+  it("the sign-in page links to sign-up", async () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={["/portal/acceso"]}>
