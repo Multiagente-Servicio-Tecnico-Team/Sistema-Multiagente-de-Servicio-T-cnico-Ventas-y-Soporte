@@ -4,6 +4,14 @@ from app.database.repository import lookup_inventory
 
 
 @tool
+def transferir_a_compras(motivo: str) -> str:
+    """Deriva faltantes confirmados a Compras, sin crear pedidos."""
+    if not isinstance(motivo, str) or not motivo.strip():
+        raise ValueError("Motivo de transferencia obligatorio")
+    return f"TRANSFERIR_COMPRAS: {motivo.strip()}"
+
+
+@tool
 def consultar_inventario(
     nombre_repuesto: str,
     cantidad: int = 1,

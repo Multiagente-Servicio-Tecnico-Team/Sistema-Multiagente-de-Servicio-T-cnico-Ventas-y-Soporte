@@ -7,6 +7,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.policy import repuesto_confirmado, software_comercial_elegible
 from app.agents.decentralized.policy import inventario_vigente, preparar_inventario
+from app.agents.decentralized.policy import evaluar_abastecimiento
 from app.agents.decentralized.handoffs import (
     HANDOFF_TOOLS, handoff_reason, validate_handoff, make_handoff_record, selected_handoff,
 )
@@ -15,6 +16,7 @@ from app.agents.decentralized.tecnico import tecnico_node, tecnico_tools
 from app.agents.decentralized.ventas import ventas_node, ventas_tools
 from app.agents.decentralized.almacen import almacen_node, almacen_tools
 from app.agents.decentralized.software import software_node, software_tools
+from app.agents.decentralized.compras import compras_node, compras_tools
 
 MAX_HANDOFFS = 5
 MAX_TOOL_ITERATIONS = 6
@@ -23,6 +25,7 @@ AGENT_NODES = {
     "soporte": soporte_node, "tecnico": tecnico_node,
     "ventas": ventas_node, "almacen": almacen_node,
     "software": software_node,
+    "compras": compras_node,
 }
 
 
@@ -76,7 +79,7 @@ def registrar_handoff(state: AgentState, origen: str):
     if (origen == "almacen" and destino is None and inventario_actual
             and not any(message.status == "error" or message.name in HANDOFF_TOOLS for message in lote)
             and state.get("required_parts") and not state.get("inventory_pending", True)):
-        destino = "ventas"
+        destino = evaluar_abastecimiento(state)["destination"]
         motivo = "Entregar inventario verificado"
     historial = list(state.get("handoff_history", []))
     contador = state.get("handoff_count", 0)
@@ -143,6 +146,11 @@ def registrar_handoff(state: AgentState, origen: str):
         }
 
     repuesto_pendiente = None
+    abastecimiento = evaluar_abastecimiento(state)
+    if origen == "almacen" and destino in {"compras", "ventas"} and abastecimiento["destination"] != destino:
+        return rechazo(ValueError("Destino incompatible con la disponibilidad de inventario verificada"))
+    if origen == "compras" and destino == "ventas" and abastecimiento["destination"] != "compras":
+        return rechazo(ValueError("Faltante de inventario sin vigencia confirmada"))
     if origen == "software" and destino == "ventas":
         alcance = datos.get("alcance") if isinstance(datos, dict) else None
         if alcance != "solo_servicio" or not software_comercial_elegible(state):
@@ -235,6 +243,13 @@ def registrar_handoff(state: AgentState, origen: str):
             actualizacion["inventory_pending"] = True
     if origen == "almacen" and destino == "ventas":
         actualizacion["inventory_requested_by"] = None
+    if origen in {"almacen", "compras"} and destino in {"compras", "ventas"}:
+        actualizacion.update(inventory_checks=abastecimiento["inventory_checks"],
+                             out_of_stock_items=abastecimiento["out_of_stock_items"])
+    if destino == "compras":
+        actualizacion["supplier_offers"] = []
+    if origen == "compras" and destino == "ventas":
+        actualizacion.update(inventory_requested_by=None, quote_scope="repuestos")
     if repuesto_pendiente is not None:
         actualizacion["quote_scope"] = "repuestos"
     elif origen in {"tecnico", "software"} and destino == "ventas":
@@ -363,6 +378,10 @@ def auditar_software(state: AgentState):
     return registrar_handoff(state, "software")
 
 
+def auditar_compras(state: AgentState):
+    return registrar_handoff(state, "compras")
+
+
 def route_next_agent(state: AgentState):
     return state.get("next_agent") or "finalizar"
 
@@ -408,6 +427,7 @@ def build_graph(checkpointer=None):
         ("ventas", ventas_tools),
         ("almacen", almacen_tools),
         ("software", software_tools),
+        ("compras", compras_tools),
     ):
         builder.add_node(f"{name}_tools", ToolNode(tools, handle_tool_errors=True))
 
@@ -417,6 +437,7 @@ def build_graph(checkpointer=None):
     builder.add_node("auditar_ventas", auditar_ventas)
     builder.add_node("auditar_almacen", auditar_almacen)
     builder.add_node("auditar_software", auditar_software)
+    builder.add_node("auditar_compras", auditar_compras)
 
     builder.add_node("preparar_turno", preparar_turno)
     builder.add_edge(START, "preparar_turno")
@@ -435,12 +456,14 @@ def build_graph(checkpointer=None):
     builder.add_edge("almacen_tools", "guardar_inventario")
     builder.add_edge("guardar_inventario", "auditar_almacen")
     builder.add_edge("software_tools", "auditar_software")
+    builder.add_edge("compras_tools", "auditar_compras")
 
     rutas = {**{name: name for name in AGENT_NODES}, "finalizar": END}
     for auditor in (
         "auditar_soporte", "auditar_tecnico",
         "auditar_almacen", "auditar_ventas",
         "auditar_software",
+        "auditar_compras",
     ):
         builder.add_conditional_edges(auditor, route_next_agent, rutas)
 

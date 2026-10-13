@@ -9,10 +9,11 @@ from langchain_core.messages import (
 
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.policy import handoff, ultimo_usuario, nombre_inventario, es_marcador
-from app.agents.decentralized.policy import preparar_inventario
+from app.agents.decentralized.policy import preparar_inventario, evaluar_abastecimiento, salida_abastecimiento
 from app.agents.decentralized.tools.almacen_tools import (
     consultar_inventario,
     transferir_a_ventas,
+    transferir_a_compras,
 )
 
 # =========================================================
@@ -37,6 +38,7 @@ llm = ChatGroq(
 almacen_tools = [
     consultar_inventario,
     transferir_a_ventas,
+    transferir_a_compras,
 ]
 
 almacen_llm = llm.bind_tools(almacen_tools)
@@ -72,8 +74,12 @@ REGLAS:
   pudo verificar la disponibilidad.
 
 TRANSFERENCIA A VENTAS:
+- Con artículos identificados y faltantes confirmados, utiliza transferir_a_compras.
+- Con stock suficiente utiliza transferir_a_ventas. Una consulta completada no
+  significa stock suficiente. Referencias ambiguas/no encontradas y errores
+  requieren aclaración; no son stock cero confirmado ni autorizan pedidos.
 - Primero verifica los repuestos con consultar_inventario.
-- Cuando tengas los resultados, utiliza transferir_a_ventas.
+- Con resultados completos, aplica la política de disponibilidad antes de transferir.
 - Incluye nombre, cantidad, stock, precio y disponibilidad.
 - Si algún repuesto no está disponible, indícalo.
 - Si una consulta falló, indica que no fue verificada.
@@ -188,7 +194,7 @@ def almacen_node(state: AgentState):
             ))]}
         prepared = preparar_inventario(state, [{"name": name, "quantity": 1}])
         if not prepared["inventory_pending"]:
-            update = handoff("almacen", "transferir_a_ventas", motivo="Inventario vigente verificado")
+            return salida_abastecimiento({**state, **prepared, "inventory_query": None})
         else:
             update = handoff("almacen", "consultar_inventario", nombre_repuesto=name, cantidad=1)
         update.update(prepared, inventory_query=None, quote_scope="repuestos")
@@ -204,9 +210,7 @@ def almacen_node(state: AgentState):
                 update = handoff("almacen", "consultar_inventario", nombre_repuesto=part["name"], cantidad=part["quantity"])
                 update.update(prepared)
                 return update
-        update = handoff("almacen", "transferir_a_ventas", motivo="Inventario verificado")
-        update.update(prepared)
-        return update
+        return salida_abastecimiento({**state, **prepared})
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),

@@ -60,7 +60,7 @@ def graph_module(monkeypatch):
     def consultar_inventario(nombre_repuesto: str, cantidad: int) -> str:
         """Catálogo aislado: SSD de prueba, precio de demostración PEN 180.00."""
         return json.dumps({"requested_name": nombre_repuesto, "name": nombre_repuesto,
-                           "quantity": cantidad, "stock": 1, "unit_price": "180.00", "available": True})
+                           "quantity": cantidad, "stock": 1, "unit_price": "180.00", "available": True, "found": True})
 
     def soporte(state):
         if isinstance(state["messages"][-1], ToolMessage) and state["messages"][-1].name == "transferir_a_soporte":
@@ -149,9 +149,9 @@ def test_importacion_y_fabrica_sin_checkpointer(graph_module):
     assert first is not second
     result = first.invoke({"messages": [HumanMessage(content="Mi PC no enciende")]})
     assert result["current_agent"] == "tecnico"
-    assert set(graph_module.AGENT_NODES) == {"soporte", "tecnico", "ventas", "almacen", "software"}
+    assert set(graph_module.AGENT_NODES) == {"soporte", "tecnico", "ventas", "almacen", "software", "compras"}
     assert {"software", "software_tools", "auditar_software"} <= set(first.nodes)
-    assert not {"compras", "facturacion", "logistica", "garantia"} & set(first.nodes)
+    assert not {"facturacion", "logistica", "garantia"} & set(first.nodes)
 
 
 @pytest.mark.parametrize("origin,target,reason,error", [
@@ -400,7 +400,8 @@ def test_lote_ignora_error_y_herramientas_ajenas(graph_module):
 def test_retorno_automatico_solicitante_y_disponibilidad(graph_module, requester):
     state = {"messages": [ToolMessage(content="{}", name="consultar_inventario", tool_call_id="inv")],
              "required_parts": [{"name": "SSD", "quantity": 1}], "inventory_pending": False,
-             "inventory_results": [{"tool_call_id": "inv", "requested_name": "SSD", "quantity": 1}],
+             "inventory_results": [{"tool_call_id": "inv", "requested_name": "SSD", "name": "SSD",
+                                    "quantity": 1, "stock": 3, "available": True, "found": True}],
              "inventory_revision": 0, "inventory_requested_by": requester}
     result = graph_module.registrar_handoff(state, "almacen")
     assert result["next_agent"] == "ventas"
@@ -427,7 +428,7 @@ def test_entrada_directa_software_conserva_estado(graph_module):
     assert result["handoff_count"] == 0
     assert result["technical_assessment"] == original["technical_assessment"]
     assert result["ticket_id"] == 9 and result["request_revision"] == 2
-    assert graph_module.route_entry({"current_agent": "compras"}) == "soporte"
+    assert graph_module.route_entry({"current_agent": "compras"}) == "compras"
 
 
 @pytest.mark.parametrize("user,destination", [("atencion", "soporte"), ("hardware", "tecnico"), ("Confirmo Servicio definido. Cotiza solo servicio", "ventas")])
@@ -719,7 +720,7 @@ def test_auditoria_comercial_valida_y_ventas_real_tarifa_pendiente(graph_module)
 
 def inventory_fixture(name="SSD de prueba", quantity=1):
     return {"requested_name": name, "name": name, "quantity": quantity, "stock": 3,
-            "unit_price": "180.00", "available": quantity <= 3, "tool_call_id": "inv"}
+            "unit_price": "180.00", "available": quantity <= 3, "found": True, "tool_call_id": "inv"}
 
 
 @pytest.mark.parametrize("inventory_revision", [None, 1, True])

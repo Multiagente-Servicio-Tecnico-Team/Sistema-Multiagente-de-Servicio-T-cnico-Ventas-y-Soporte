@@ -73,8 +73,9 @@ def network(monkeypatch):
         if controls.get("inventory_error"):
             raise RuntimeError("Fallo de consulta simulado")
         # Mismo catálogo aislado usado por tests/test_decentralized_repository.py.
+        stock = controls.get("inventory_stock", 3)
         return {"requested_name": requested_name, "name": "SSD de prueba", "quantity": quantity,
-                "stock": 3, "unit_price": "180.00", "available": quantity <= 3,
+                "stock": stock, "unit_price": "180.00", "available": quantity <= stock,
                 "inventory_id": 1, "found": True}
     monkeypatch.setattr(repository, "lookup_inventory", inventory)
 
@@ -197,7 +198,7 @@ def test_rag_y_checkpoint_multiturno_aislado(network):
 def test_inventario_revision_y_parcial(network, revision, complete):
     _, controls = network
     previous = {"requested_name": "SSD de prueba", "name": "SSD de prueba", "quantity": 1,
-                "stock": 3, "unit_price": "180.00", "available": True, "tool_call_id": "old"}
+                "stock": 3, "unit_price": "180.00", "available": True, "found": True, "tool_call_id": "old"}
     result = run(network, "Consultar pieza indicada", "almacen", request_revision=2, inventory_revision=revision,
                  required_parts=[{"name": "SSD de prueba", "quantity": 1}], inventory_results=[previous] if complete else [],
                  inventory_requested_by="software")

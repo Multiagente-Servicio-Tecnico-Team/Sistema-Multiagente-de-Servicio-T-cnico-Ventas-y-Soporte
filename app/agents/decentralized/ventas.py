@@ -372,6 +372,8 @@ def ventas_node(state: AgentState):
                     reply = "El subtotal mostrado corresponde solo a los repuestos disponibles. No incluye instalación ni mano de obra; su tarifa sigue pendiente de validación."
                 else:
                     reply = "Todavía no hay un importe de repuestos disponibles confirmado. La tarifa de instalación y mano de obra también está pendiente de validación."
+            if state.get("out_of_stock_items"):
+                reply += "\nHay faltantes de inventario. Abastecimiento no tiene ofertas externas verificadas: costo, proveedor y plazo siguen pendientes. No hay pedido, reserva ni entrega comprometidos."
             return {"current_agent": "ventas", "quote": quote, "messages": [AIMessage(content=reply)]}
         response = ventas_llm.invoke(messages)
 

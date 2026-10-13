@@ -232,3 +232,65 @@ def preparar_inventario(state, required):
     return {"request_revision": revision, "required_parts": required,
             "inventory_results": results, "inventory_revision": revision if results else None,
             "inventory_pending": not complete, "inventory_requested_by": "ventas"}
+
+
+def evaluar_abastecimiento(state):
+    """Disponibilidad local verificada; ausencia/ambigüedad nunca es stock cero."""
+    checks, missing = [], []
+    parts = state.get("required_parts", [])
+    if not isinstance(parts, list) or any(not isinstance(part, dict) for part in parts):
+        return {"inventory_checks": [], "out_of_stock_items": [], "destination": None}
+    raw = state.get("inventory_results", [])
+    results = inventario_vigente(state) if isinstance(raw, list) and all(isinstance(item, dict) for item in raw) else []
+    valid = bool(parts) and not any("inventario" in str(error).lower() for error in state.get("errors", []))
+    for part in parts:
+        matches = [item for item in results if item.get("requested_name") == part.get("name")
+                   and item.get("quantity") == part.get("quantity")]
+        result = matches[0] if len(matches) == 1 else None
+        status, shortage, fields = "NEEDS_DETAILS", None, []
+        if (not isinstance(part.get("name"), str) or not part["name"].strip()
+                or type(part.get("quantity")) is not int or part["quantity"] <= 0):
+            fields = ["referencia y cantidad positiva verificadas"]
+            valid = False
+        elif result is None:
+            fields = ["consulta vigente"]
+            valid = False
+        elif type(result.get("quantity")) is not int or result["quantity"] <= 0:
+            fields = ["cantidad verificada"]
+            valid = False
+        elif result.get("found") is False:
+            status = "NEEDS_DETAILS" if result.get("match_status") == "ambiguous" else "NOT_FOUND"
+            fields = ["identificación de catálogo"]
+            valid = False
+        elif (result.get("found") is not True
+              or not isinstance(result.get("name"), str) or not result["name"].strip()
+              or result.get("match_status") in {"ambiguous", "not_found"}
+              or type(result.get("stock")) is not int or result["stock"] < 0
+              or type(result.get("available")) is not bool
+              or result["available"] != (result["stock"] >= part["quantity"])):
+            fields = ["referencia y existencias coherentes confirmadas"]
+            valid = False
+        elif result["available"]:
+            status, shortage = "AVAILABLE", 0
+        elif (result.get("found") is True and type(result.get("stock")) is int
+              and result["stock"] >= 0 and result["stock"] < part["quantity"]):
+            shortage = part["quantity"] - result["stock"]
+            status = "PARTIAL" if result["stock"] else "OUT_OF_STOCK"
+            missing.append({**part, "quantity": shortage})
+        else:
+            fields = ["existencias confirmadas"]
+            valid = False
+        checks.append({"status": status, "request": dict(part), "candidates": [],
+                       "missing_quantity": shortage, "missing_fields": fields})
+    return {"inventory_checks": checks, "out_of_stock_items": missing,
+            "destination": ("compras" if missing else "ventas") if valid else None}
+
+def salida_abastecimiento(state):
+    evaluation = evaluar_abastecimiento(state)
+    destination = evaluation.pop("destination")
+    if destination is None:
+        update = {"current_agent": "almacen", "messages": [AIMessage(content="Falta una identificación o consulta vigente fiable. Confirma la referencia exacta; no puedo interpretar ausencia o ambigüedad como stock agotado.")]}
+    else:
+        update = handoff("almacen", f"transferir_a_{destination}", motivo="Faltantes confirmados" if destination == "compras" else "Inventario vigente verificado")
+    update.update(evaluation, inventory_query=None)
+    return update
