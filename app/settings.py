@@ -17,6 +17,7 @@ class Settings:
     langsmith_hide_outputs: bool
     labor_maintenance_price: Decimal
     labor_diagnosis_price: Decimal
+    labor_pc_build_price: Decimal = Decimal("50.00")
 
     def require_chat_configuration(self) -> None:
         missing = []
@@ -35,6 +36,10 @@ class Settings:
             )
 
     def labor_price_for(self, task_type: str) -> Decimal:
+        if task_type == "sale":
+            return Decimal("0.00")
+        if task_type == "pc_build":
+            return self.labor_pc_build_price
         if task_type == "maintenance":
             return self.labor_maintenance_price
         if task_type == "diagnosis":
@@ -98,10 +103,14 @@ def load_settings() -> Settings:
         ),
         labor_maintenance_price=_labor_price(
             "LABOR_MAINTENANCE_PRICE",
-            "40.00",
+            "35.00",
         ),
         labor_diagnosis_price=_labor_price(
             "LABOR_DIAGNOSIS_PRICE",
+            "50.00",
+        ),
+        labor_pc_build_price=_labor_price(
+            "LABOR_PC_BUILD_PRICE",
             "50.00",
         ),
     )
