@@ -1,9 +1,9 @@
 /*
- * Portal chat client: POST /api/chat of the LangGraph pattern.
+ * Cliente del chat del portal: POST /api/chat del patrón LangGraph.
  *
- * - With VITE_CHAT_URL set it calls the pattern; the sign-in cookie provides the identity
- *   (credentials: "include"). The body never carries the customer's email or id.
- * - Without VITE_CHAT_URL the assistant stays in demo mode.
+ * - Con VITE_CHAT_URL definido llama al patrón; la identidad la da la cookie del inicio de sesión
+ *   (credentials: "include"). El cuerpo nunca lleva correo ni identificador del cliente.
+ * - Sin VITE_CHAT_URL el asistente sigue en modo demostración.
  */
 import { resolveApiBaseUrl } from "./baseUrl.js";
 
@@ -104,7 +104,7 @@ export const chatApi = createChatApi({
   ),
 });
 
-/** Ticket statuses from the database script -> text for the customer. */
+/** Estados de ticket del script de BD -> texto para el cliente. */
 export const TICKET_STATUS_LABEL = {
   NEW: "Recibido",
   IN_DIAGNOSIS: "En diagnóstico",

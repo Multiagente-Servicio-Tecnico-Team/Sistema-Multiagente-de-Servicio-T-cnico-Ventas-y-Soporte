@@ -15,7 +15,7 @@ export default function StaffLayout() {
 
   useEffect(() => setOpen(false), [pathname]);
 
-  // Keeps "Taller" highlighted on the ticket detail and new ticket pages too.
+  // Mantiene resaltado "Taller" también en el detalle y alta de tickets.
   const isActive = (link) => (link.end ? pathname === "/taller" || pathname.startsWith("/taller/tickets") : pathname.startsWith(link.to));
 
   return (

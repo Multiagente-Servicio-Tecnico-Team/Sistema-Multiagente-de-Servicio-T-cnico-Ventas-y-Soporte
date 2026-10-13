@@ -81,7 +81,7 @@ describe("sign-up screen", () => {
     await user.click(screen.getByRole("button", { name: /crear mi cuenta/i }));
 
     expect(await screen.findByRole("heading", { name: "Mis Tickets" })).toBeInTheDocument();
-    // First and last name split for the name and last_name columns of users.
+    // Nombre y apellido separados para las columnas name y last_name de users.
     expect(api.register).toHaveBeenCalledWith({
       firstName: "Martín",
       lastName: "Gómez",
