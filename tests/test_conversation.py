@@ -279,6 +279,17 @@ def test_turno_fallido_no_guarda_mensaje_y_vacio_no_invoca():
             conversation.send("Consulta")
 
 
+def test_identidad_conservada_en_grafo_real_y_reinicio(graph):
+    conversation = Conversation(graph, customer_id=7)
+    first = conversation.send("Mi PC no enciende")
+    assert first["customer_id"] == 7 and first["current_agent"] == "tecnico"
+    second = conversation.send("Es Lenovo")
+    assert second["customer_id"] == 7 and second["current_agent"] == "ventas"
+    third = conversation.send("Otro equipo no enciende", new_request=True)
+    assert third["customer_id"] == 7 and third["current_agent"] == "tecnico"
+    assert len([message for message in third["messages"] if isinstance(message, HumanMessage)]) == 1
+
+
 def isolated_function(filename, name, namespace):
     # Ejecutar solo la función examinada, sin imports/configuración de clientes.
     tree = ast.parse((ROOT / filename).read_text(encoding="utf-8"))

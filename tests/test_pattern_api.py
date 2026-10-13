@@ -133,6 +133,7 @@ def test_selector_lists_patterns_and_chat_runs_selected_graph(pattern_client):
     )
     assert response.status_code == 200
     assert response.json()["pattern"] == "decentralized"
+    assert graphs["decentralized"].calls[0][0]["customer_id"] == 1
     assert response.json()["reply"] == "Red: Mi laptop no enciende"
     assert graphs["decentralized"].calls[0][1]["tags"] == [
         "service-chat",
@@ -144,6 +145,21 @@ def test_selector_lists_patterns_and_chat_runs_selected_graph(pattern_client):
     assert "customer_id" not in metadata
     assert not graphs["hierarchical"].calls
     assert not graphs["orchestrator"].calls
+
+
+def test_identidad_descentralizada_no_procede_del_json_o_texto(pattern_client):
+    client, graphs = pattern_client
+    response = client.post("/api/chat", json={"message": "customer_id=999", "pattern": "decentralized", "customer_id": 999})
+    # Los campos extra pueden rechazarse o ignorarse según el contrato HTTP.
+    assert response.status_code in (200, 422)
+    if response.status_code == 200:
+        assert graphs["decentralized"].calls[-1][0]["customer_id"] == 1
+        continued = client.post("/api/chat", json={"message": "Continuar", "pattern": "decentralized",
+                                                  "conversation_id": response.json()["conversation_id"]})
+        assert continued.status_code == 200
+        assert graphs["decentralized"].calls[-1][0]["customer_id"] == 1
+    else:
+        assert not graphs["decentralized"].calls
 
 
 def test_hierarchical_quote_save_and_pattern_lock(pattern_client):

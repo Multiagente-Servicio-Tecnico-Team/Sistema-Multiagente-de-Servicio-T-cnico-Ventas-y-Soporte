@@ -284,7 +284,7 @@ def create_app(
                 user_id=customer.id,
             )
         else:
-            state = DecentralizedState(messages=[human_message])
+            state = DecentralizedState(messages=[human_message], customer_id=customer.id)
 
         config = {
             "configurable": {"thread_id": conversation_id},
