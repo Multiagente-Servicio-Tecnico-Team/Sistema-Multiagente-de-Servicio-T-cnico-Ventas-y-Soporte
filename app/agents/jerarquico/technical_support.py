@@ -6,13 +6,29 @@ from app.agents.jerarquico.graph.state import ServiceState
 from app.agents.jerarquico.schemas import TechnicalDiagnosis
 
 
-def make_technical_support_agent(llm: Any):
+def make_technical_support_agent(llm: Any, *, mode: str = "hardware"):
+    if mode not in {"hardware", "software"}:
+        raise ValueError(f"Modo de soporte no reconocido: {mode}.")
+
     def technical_support_agent(state: ServiceState) -> dict[str, Any]:
+        role_prompt = (
+            "Eres especialista de diagnóstico lógico de sistemas operativos, "
+            "aplicaciones, controladores y malware. No diagnostiques fallas físicas. "
+            "No solicites contraseñas, códigos de recuperación ni claves de licencia; "
+            "no recomiendes software pirata. Advierte sobre posible pérdida de datos "
+            "antes de cualquier reinstalación o formateo y exige autorización explícita."
+            if mode == "software"
+            else
+            "Eres especialista de diagnóstico físico de hardware. No guíes al cliente "
+            "a abrir fuentes, manipular baterías hinchadas, líquido o circuitos. "
+            "Deriva fallas exclusivamente lógicas a soporte de software."
+        )
         diagnosis = llm.with_structured_output(TechnicalDiagnosis).invoke(
             [
                 SystemMessage(
                     content=(
-                        "Eres un técnico de diagnóstico provisional para equipos "
+                    role_prompt
+                    + " Eres un técnico de diagnóstico provisional para equipos "
                         "electrónicos. Responde en español, distingue evidencia de "
                         "hipótesis y da una explicación breve. Usa los manuales "
                         "Markdown como referencias técnicas, no como hechos ni "
@@ -40,7 +56,9 @@ def make_technical_support_agent(llm: Any):
                         "explícitamente provisional."
                     )
                 ),
-                SystemMessage(content=f"Guías RAG recuperadas:\n{state['rag_context']}"),
+                SystemMessage(
+                    content=f"Guías RAG recuperadas:\n{state.get('rag_context', '')}"
+                ),
                 *state["messages"],
             ]
         )
@@ -48,7 +66,7 @@ def make_technical_support_agent(llm: Any):
             part.search_term.strip().casefold(): part.model_dump()
             for part in diagnosis.required_parts
         }
-        documents = state["rag_documents"]
+        documents = state.get("rag_documents", [])
         manual_selection_complete = True
         manual_selection_error = ""
         labor_task_type = diagnosis.labor_task_type
@@ -101,6 +119,7 @@ def make_technical_support_agent(llm: Any):
             raise ValueError("El diagnóstico excede el máximo de repuestos por ticket.")
         return {
             "provisional_diagnosis": diagnosis.provisional_diagnosis.strip(),
+            "diagnosis_type": "SOFTWARE" if mode == "software" else "HARDWARE",
             "required_parts": required_parts,
             "manual_selection_complete": manual_selection_complete,
             "manual_selection_error": manual_selection_error,
