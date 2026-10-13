@@ -9,6 +9,7 @@ from langchain_core.messages import (
 
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.policy import handoff, ultimo_usuario, nombre_inventario, es_marcador
+from app.agents.decentralized.policy import preparar_inventario
 from app.agents.decentralized.tools.almacen_tools import (
     consultar_inventario,
     transferir_a_ventas,
@@ -185,19 +186,27 @@ def almacen_node(state: AgentState):
                 "Indica su referencia real (capacidad e interfaz, si es un SSD), sin corchetes. "
                 "No seleccionaré una variante por ti."
             ))]}
-        update = handoff("almacen", "consultar_inventario", nombre_repuesto=name, cantidad=1)
-        update.update(required_parts=[{"name": name, "quantity": 1}], inventory_pending=True,
-                      inventory_query=None, inventory_results=[], quote_scope="repuestos")
+        prepared = preparar_inventario(state, [{"name": name, "quantity": 1}])
+        if not prepared["inventory_pending"]:
+            update = handoff("almacen", "transferir_a_ventas", motivo="Inventario vigente verificado")
+        else:
+            update = handoff("almacen", "consultar_inventario", nombre_repuesto=name, cantidad=1)
+        update.update(prepared, inventory_query=None, quote_scope="repuestos")
         return update
     required = state.get("required_parts", [])
     if required:
         if any("inventario" in e.lower() for e in state.get("errors", [])):
             return {"current_agent": "almacen", "messages": [AIMessage(content="No se pudo verificar el inventario. No puedo confirmar una cotización.")]}
-        results = state.get("inventory_results", [])
+        prepared = preparar_inventario(state, required)
+        results = prepared["inventory_results"]
         for part in required:
             if not any(r.get("requested_name") == part["name"] and r.get("quantity") == part["quantity"] for r in results):
-                return handoff("almacen", "consultar_inventario", nombre_repuesto=part["name"], cantidad=part["quantity"])
-        return handoff("almacen", "transferir_a_ventas", motivo="Inventario verificado")
+                update = handoff("almacen", "consultar_inventario", nombre_repuesto=part["name"], cantidad=part["quantity"])
+                update.update(prepared)
+                return update
+        update = handoff("almacen", "transferir_a_ventas", motivo="Inventario verificado")
+        update.update(prepared)
+        return update
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),

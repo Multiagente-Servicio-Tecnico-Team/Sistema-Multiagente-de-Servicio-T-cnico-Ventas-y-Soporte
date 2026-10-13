@@ -4,10 +4,12 @@ from app.rag.tools import consultar_base_conocimiento
 from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.policy import ultimo_usuario, es_atencion, es_compatibilidad, handoff, ATENCION_NO_CONFIGURADA, es_inventario, es_marcador
+from app.agents.decentralized.policy import triaje_soporte
 from app.agents.decentralized.tools.soporte_tools import (
     consultar_estado_ticket,
     transferir_a_tecnico,
     transferir_a_ventas,
+    transferir_a_software,
 )
 
 # Carga las variables del archivo .env
@@ -28,6 +30,7 @@ soporte_tools = [
     consultar_estado_ticket,
     transferir_a_tecnico,
     transferir_a_ventas,
+    transferir_a_software,
     consultar_base_conocimiento,
 ]
 
@@ -65,8 +68,13 @@ TICKETS:
   utiliza consultar_estado_ticket.
 
 SOLICITUDES TÉCNICAS:
-- Si el usuario reporta un problema técnico,
-  utiliza transferir_a_tecnico.
+- Para aplicaciones, sistemas operativos, controladores o configuración con
+  evidencia lógica suficiente, utiliza transferir_a_software con motivo explícito.
+- Para fallas físicas o componentes utiliza transferir_a_tecnico.
+- Lentitud y pantalla azul pueden ser físicas o lógicas: pide aclaraciones.
+  No clasifiques por mencionar Windows ni conviertas hipótesis en diagnósticos.
+  Considera negaciones y respuestas previas, sin rescatar fallas antiguas cuando
+  cambia la consulta. Ninguna transferencia instala ni configura el dispositivo.
 - Si el usuario indica que un componente ya fue
   diagnosticado y necesita reemplazo, también
   utiliza transferir_a_tecnico.
@@ -74,8 +82,8 @@ SOLICITUDES TÉCNICAS:
   existe información técnica suficiente.
 
 SOLICITUDES MIXTAS:
-- Si el usuario solicita reparación y cotización,
-  prioriza transferir_a_tecnico.
+- Si solicita reparación y cotización, prioriza la evaluación técnica:
+  Software para un caso lógico claro; Técnico para componentes o fallas físicas.
 - Esto se aplica incluso cuando el diagnóstico
   ya fue confirmado.
 - Técnico determinará si se necesitan repuestos
@@ -119,6 +127,18 @@ def soporte_node(state: AgentState):
         return {"current_agent": "soporte", "messages": [AIMessage(content=ATENCION_NO_CONFIGURADA)]}
     if atendiendo_transferencia:
         return {"current_agent": "soporte", "messages": [AIMessage(content="¿Necesitas consultar un ticket, disponibilidad de un repuesto o información de atención? Indícame qué consulta quieres continuar.")]}
+
+    # Seguimiento y atención general no deben rescatar una falla del historial.
+    if "ticket" not in user.lower():
+        destino = triaje_soporte(state)
+        if destino in {"software", "tecnico"}:
+            return handoff("soporte", f"transferir_a_{destino}",
+                           motivo="Evaluar consulta lógica reportada, sin causa confirmada" if destino == "software"
+                           else "Evaluar indicios físicos o componentes reportados, sin causa confirmada")
+        if destino == "aclarar":
+            return {"current_agent": "soporte", "messages": [AIMessage(content=(
+                "No puedo determinar el área solo con ese síntoma. ¿Qué ocurre exactamente y en qué aplicación o momento aparece?"
+            ))]}
 
     # Combinamos el System Prompt con el historial
     messages = [

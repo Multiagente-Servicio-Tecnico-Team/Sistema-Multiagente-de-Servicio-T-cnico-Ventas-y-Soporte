@@ -2,6 +2,14 @@ from langchain_core.tools import tool
 
 
 @tool
+def transferir_a_software(motivo: str) -> str:
+    """Deriva una consulta lógica a Software sin ejecutar cambios ni diagnosticar."""
+    if not isinstance(motivo, str) or not motivo.strip():
+        raise ValueError("Motivo de transferencia obligatorio")
+    return f"TRANSFERIR_SOFTWARE: {motivo.strip()}"
+
+
+@tool
 def transferir_a_soporte(motivo: str) -> str:
     """Devuelve a Soporte una consulta de ticket o atención general.
 

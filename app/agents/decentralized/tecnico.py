@@ -4,7 +4,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 from app.agents.decentralized.state import AgentState
 from app.agents.decentralized.policy import es_revision_comercial, ultimo_usuario, handoff, no_puede_probar, es_atencion
-from app.agents.decentralized.tools.soporte_tools import transferir_a_soporte
+from app.agents.decentralized.policy import triaje_soporte, transferencia_sin_progreso, peligro_fisico_reportado
+from app.agents.decentralized.tools.soporte_tools import transferir_a_soporte, transferir_a_software
 from app.agents.decentralized.tools.tecnico_tools import (
     diagnosticar_problema,
     transferir_a_ventas,
@@ -24,6 +25,7 @@ llm = ChatGroq(
 
 tecnico_tools = [
     transferir_a_soporte,
+    transferir_a_software,
     diagnosticar_problema,
     transferir_a_ventas,
     transferir_a_almacen,
@@ -43,6 +45,15 @@ Eres el agente Técnico de un sistema multiagente
 de servicio técnico, ventas y soporte.
 
 RESPONSABILIDADES:
+- Eres el especialista Hardware: componentes, energía, temperatura,
+  periféricos y compatibilidad física documentada. Conservas el nombre tecnico.
+- Deriva problemas claramente lógicos de aplicaciones, sistemas operativos,
+  controladores o configuración mediante transferir_a_software, con motivo.
+- Ante síntomas mixtos o ambiguos, pide evidencia adicional; no atribuyas
+  causas ni registres HYBRID solo porque ambos especialistas fueron visitados.
+- La herramienta diagnosticar_problema mantiene hipótesis legacy mixtas;
+  no confirma una causa física ni autoriza elegir repuestos. Software evalúa
+  hipótesis lógicas. No realices instalaciones ni configuraciones.
 - Analizar los síntomas reportados por el usuario.
 - Realizar diagnósticos preliminares.
 - Utilizar diagnosticar_problema cuando corresponda.
@@ -159,11 +170,34 @@ REGLAS GENERALES:
 def tecnico_node(state: AgentState):
     """Nodo Técnico del grafo descentralizado."""
 
-    if es_revision_comercial(ultimo_usuario(state)):
+    user = ultimo_usuario(state)
+    classification = triaje_soporte(state)
+    if peligro_fisico_reportado(user):
+        return {"current_agent": "tecnico", "messages": [AIMessage(content=(
+            "Ante esos indicios físicos, suspende las pruebas y no sigas encendiendo ni cargando el equipo. "
+            "Necesitas revisión presencial; no puedo confirmar la causa ni reservar una cita."
+        ))]}
+    if es_atencion(user):
+        return handoff("tecnico", "transferir_a_soporte", motivo="Orientación presencial")
+    if classification == "software":
+        if state.get("required_parts") or state.get("requested_items") or state.get("technical_assessment", {}).get("hardware_diagnosis"):
+            return {"current_agent": "tecnico", "messages": [AIMessage(content=(
+                "Hay información física o componentes pendientes junto a la consulta lógica. "
+                "¿La consulta de software es parte de esa reparación o una solicitud distinta?"
+            ))]}
+        if transferencia_sin_progreso(state, "tecnico", "software"):
+            return {"current_agent": "tecnico", "messages": [AIMessage(content=(
+                "Ya derivamos esta consulta a Software. ¿Qué información nueva tienes para continuar la evaluación?"
+            ))]}
+        return handoff("tecnico", "transferir_a_software",
+                       motivo="Evaluar evidencia lógica reportada; Hardware no confirma una causa de software")
+    if classification == "aclarar" and not es_revision_comercial(user):
+        return {"current_agent": "tecnico", "messages": [AIMessage(content=(
+            "Ese síntoma no permite distinguir Hardware de Software. ¿Qué ocurre exactamente y qué mensaje de error aparece?"
+        ))]}
+    if es_revision_comercial(user):
         return handoff("tecnico", "transferir_a_ventas", motivo="Cotizar únicamente revisión de diagnóstico",
                        alcance="solo_servicio")
-    if es_atencion(ultimo_usuario(state)):
-        return handoff("tecnico", "transferir_a_soporte", motivo="Orientación presencial")
     if no_puede_probar(ultimo_usuario(state)):
         return {"current_agent": "tecnico", "messages": [AIMessage(content=(
             "Entiendo que no puedes realizar esas pruebas. No necesitas conectar otro equipo "

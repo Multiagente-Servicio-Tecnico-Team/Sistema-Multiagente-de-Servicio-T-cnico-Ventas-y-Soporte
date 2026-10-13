@@ -1,4 +1,21 @@
 import pytest
+from pydantic import ValidationError
+from langchain_core.messages import ToolMessage
+from app.agents.decentralized.handoffs import HANDOFF_TOOLS, handoff_reason
+from app.agents.decentralized.tools.soporte_tools import transferir_a_software
+
+
+def test_transferencia_software_nombre_motivo_y_formato():
+    assert HANDOFF_TOOLS[transferir_a_software.name] == "software"
+    output = transferir_a_software.invoke({"motivo": "  Aplicación falla  "})
+    assert output == "TRANSFERIR_SOFTWARE: Aplicación falla"
+    assert handoff_reason([ToolMessage(content=output, name=transferir_a_software.name, tool_call_id="a")]) == "Aplicación falla"
+
+
+@pytest.mark.parametrize("args", [{}, {"motivo": ""}, {"motivo": " \n"}, {"motivo": None}, {"motivo": 2}])
+def test_transferencia_software_rechaza_motivo(args):
+    with pytest.raises((ValueError, ValidationError)):
+        transferir_a_software.invoke(args)
 
 from app.agents.decentralized.tools.soporte_tools import (
     consultar_estado_ticket,

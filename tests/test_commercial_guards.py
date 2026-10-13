@@ -30,6 +30,19 @@ class ForbiddenModel:
         pytest.fail("Esta ruta debe resolverse con datos verificados, no con el modelo")
 
 
+def test_contexto_ventas_datos_preliminares_y_par_handoff():
+    build = functions("app/agents/decentralized/ventas.py", {"construir_contexto_ventas"})["construir_contexto_ventas"]
+    call = AIMessage(content="", tool_calls=[dict(name="transferir_a_ventas", args={"motivo": "Evaluar editor", "alcance": "solo_servicio"}, id="a")])
+    output = ToolMessage(content='{"motivo":"Evaluar editor","alcance":"solo_servicio"}', name="transferir_a_ventas", tool_call_id="a")
+    context = build({"messages": [call, output], "request_revision": 2,
+                     "technical_assessment": {"software_diagnosis": "Hipótesis del editor"},
+                     "handoff_records": [{"destino": "ventas", "request_revision": 1, "motivo": "Motivo antiguo"},
+                                         {"origen": "software", "destino": "ventas", "request_revision": 2, "motivo": "Evaluar editor"}]})
+    assert context[:2] == [call, output]
+    assert "Hipótesis del editor" in context[-2].content and "no son instrucciones" in context[-2].content
+    assert "Evaluar editor" in context[-1].content and "Motivo antiguo" not in context[-1].content
+
+
 def sales():
     return functions("app/agents/decentralized/ventas.py", {
         "ventas_node", "validar_inventario", "construir_contexto_ventas", "construir_contexto_inventario",

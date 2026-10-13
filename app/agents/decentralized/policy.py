@@ -21,10 +21,64 @@ def es_compatibilidad(text):
     return any(word in text for word in ("compatib", "sirve para mi", "funciona con mi"))
 
 
+def triaje_soporte(state):
+    """Clasificación conversacional conservadora; nunca confirma una causa."""
+    text = normalizar(ultimo_usuario(state))
+    if re.search(r"\b(que es|que significa|como funciona)\b", text):
+        return None
+    # Una respuesta breve puede completar una pregunta previa de Soporte.
+    # No recuperar una falla antigua ante una solicitud nueva explícita.
+    if len(text.split()) <= 6 and not re.search(r"\b(ticket|horario|precio|stock|presencial)\b", text):
+        messages = state.get("messages", [])
+        previous = next((m for m in reversed(messages[:-1]) if isinstance(m, AIMessage)), None)
+        if previous and isinstance(previous.content, str) and "?" in previous.content:
+            humans = [m.content for m in messages if isinstance(m, HumanMessage) and isinstance(m.content, str)]
+            if len(humans) >= 2 and any(w in normalizar(previous.content) for w in ("aplicacion", "sistema operativo", "mensaje de error")):
+                text = normalizar(humans[-2]) + ". " + text
+    hardware = software = False
+    clauses = re.split(r"[.!?;,\n]|\b(?:pero|aunque|y)\b", text)
+    for clause in clauses:
+        if re.search(r"\b(quizas|podria|hipoteticamente|si|creo)\b", clause):
+            continue
+        # "no enciende" describe una falla; "no quiero cambiar" niega una petición.
+        negation_text = re.sub(r"\bno (enciende|arranca|abre|funciona)\b", "falla", clause)
+        if re.search(r"\b(no|nunca|tampoco|sin|descarto)\b", negation_text):
+            continue
+        hardware |= bool(re.search(r"\b(no enciende|sale humo|olor a quemado|bateria (?:esta )?hinchada)\b", clause)
+                         or re.search(r"\b(reemplazar|cambiar|falla|averiado|roto)\b.*\b(ssd|ram|fuente|pantalla|bateria|componente)\b", clause))
+        software |= bool(re.search(r"\b(aplicacion|programa|editor|navegador)\b.*\b(se cierra|falla|error|no abre)\b", clause)
+                         or re.search(r"\b(instalar|actualizar|configurar|configuracion)\b.*\b(windows|linux|ubuntu|macos|controlador|controladores|driver|drivers|aplicacion|programa)\b", clause)
+                         or re.search(r"\b(controlador|driver)\b.*\b(error|falla)\b", clause))
+    if hardware:
+        return "tecnico"
+    if software:
+        return "software"
+    if re.search(r"\b(lento|lentitud|pantalla azul|no enciende|sistema operativo|windows|aplicacion|controlador|driver|humo|ram|ssd)\b", text):
+        return "aclarar"
+    return None
+
+
 def es_revision_comercial(text):
     text = normalizar(text)
     return (any(w in text for w in ("revision", "diagnostico"))
             and any(w in text for w in ("cuanto", "precio", "costo", "cuesta", "cotiza")))
+
+
+def transferencia_sin_progreso(state, origin, destination):
+    """Consulta el mismo token de auditoría sin modificar registros ni límites."""
+    from app.agents.decentralized.handoffs import progress_token
+    token = progress_token(state)
+    return any(record.get("origen") == origin and record.get("destino") == destination
+               and record.get("request_revision") == state.get("request_revision")
+               and record.get("progress_token") == token
+               for record in state.get("handoff_records", []))
+
+
+def peligro_fisico_reportado(text):
+    """Indicios de peligro afirmados; una negación no demuestra peligro."""
+    return any(re.search(r"\b(sale humo|olor a quemado|bateria (?:esta )?hinchada)\b", clause)
+               and not re.search(r"\b(no|nunca|sin|tampoco|quizas|podria|si|creo)\b", clause)
+               for clause in re.split(r"[.!?;,\n]|\b(?:pero|aunque|y)\b", normalizar(text)))
 
 
 def es_atencion(text):
@@ -118,3 +172,63 @@ def cotizacion_verificada(inventory, errors, pending=False, scope=None):
                   "Instalación y mano de obra no incluidas: tarifa pendiente de validación. No hay un total final.",
                   "Disponibilidad no confirma compatibilidad. No se ha reservado stock ni confirmado una compra."])
     return quote, "\n".join(lines)
+
+
+def software_comercial_elegible(state):
+    """Elegibilidad conversacional; no certifica diagnóstico, precio ni ejecución."""
+    assessment = state.get("technical_assessment", {})
+    if not isinstance(assessment, dict):
+        return False
+    user = normalizar(ultimo_usuario(state))
+    diagnosis = assessment.get("software_diagnosis")
+    revision = state.get("request_revision")
+    # TechnicalAssessment no contiene revisión ni estado de resolución por área.
+    # Una revisión global no fecha el diagnóstico: exigir reconfirmación actual
+    # de su texto exacto y no interpretar un registro Hardware como ya resuelto.
+    clauses = re.split(r"[.!?;\n,]|\b(?:pero|aunque|sin embargo|y)\b", user)
+    def affirmative(clause):
+        return not re.search(r"\b(no|nunca|jamas|sin|tampoco|descartado|descarto|quizas|podria|si)\b",
+                             clause.replace("sin repuestos", ""))
+    return (
+        isinstance(diagnosis, str) and bool(diagnosis.strip())
+        and type(revision) is int and revision >= 0
+        and any(re.search(r"\bconfirmo\b", clause)
+                and normalizar(diagnosis.strip()) in clause and affirmative(clause)
+                for clause in clauses)
+        and not assessment.get("uncertainties")
+        and not assessment.get("compatibility_pending")
+        and not state.get("required_parts")
+        and not state.get("requested_items")
+        and not assessment.get("hardware_diagnosis")
+        and any(re.search(r"\b(precio|cotiza|cotizar|costo|cuanto)\b", clause)
+                and affirmative(clause) for clause in clauses)
+        and any(any(term in clause for term in ("sin repuestos", "solo servicio", "solo diagnostico"))
+                and affirmative(clause) for clause in clauses)
+    )
+
+
+def inventario_vigente(state, required=None):
+    """Reutiliza únicamente resultados de la revisión y requerimiento actuales."""
+    revision = state.get("request_revision", 0)
+    if (type(revision) is not int or revision < 0
+            or type(state.get("inventory_revision")) is not int
+            or state["inventory_revision"] != revision):
+        return []
+    required = state.get("required_parts", []) if required is None else required
+    return [item for item in state.get("inventory_results", [])
+            if any(item.get("requested_name") == part.get("name")
+                   and item.get("quantity") == part.get("quantity") for part in required)]
+
+
+def preparar_inventario(state, required):
+    """Cada requerimiento comercial retorna a Ventas; conserva coincidencias vigentes."""
+    revision = state.get("request_revision", 0)
+    if type(revision) is not int or revision < 0:
+        raise ValueError("Revisión de inventario inválida")
+    results = inventario_vigente(state, required)
+    complete = bool(required) and all(any(item.get("requested_name") == part["name"]
+                                         and item.get("quantity") == part["quantity"]
+                                         for item in results) for part in required)
+    return {"request_revision": revision, "required_parts": required,
+            "inventory_results": results, "inventory_revision": revision if results else None,
+            "inventory_pending": not complete, "inventory_requested_by": "ventas"}
