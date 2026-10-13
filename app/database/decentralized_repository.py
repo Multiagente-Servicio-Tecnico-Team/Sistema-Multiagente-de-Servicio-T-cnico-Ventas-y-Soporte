@@ -1,0 +1,283 @@
+"""Persistencia v2 aislada. Sin conexión, DDL ni escritura al importar.
+
+customer_id debe provenir de SessionGuard, nunca del modelo/navegador.
+PostgreSQL serializa escrituras mediante bloqueos de filas. SQLite se usa sólo
+en pruebas secuenciales. No se reserva ni modifica stock al cotizar.
+"""
+from decimal import Decimal, localcontext
+
+from sqlalchemy import MetaData, Table, insert, select, update
+from sqlalchemy.exc import IntegrityError
+
+
+class RetryConflict(ValueError):
+    """La misma operación se reintentó con datos distintos."""
+
+
+def _id(value):
+    if type(value) is not int or not 0 < value <= 9223372036854775807:
+        raise ValueError("Identificador inválido")
+    return value
+
+
+def _quantity(value):
+    if type(value) is not int or not 0 < value <= 2147483647:
+        raise ValueError("Cantidad fuera de INTEGER")
+    return value
+
+
+def _text(value, maximum=None):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Texto obligatorio")
+    value = value.strip()
+    if maximum is not None and len(value) > maximum:
+        raise ValueError("Texto demasiado largo")
+    return value
+
+
+def _money(value):
+    if not isinstance(value, Decimal) or not value.is_finite():
+        raise ValueError("El importe debe ser Decimal finito")
+    if value < 0 or value > Decimal("99999999.99"):
+        raise ValueError("Importe fuera de NUMERIC(10,2)")
+    with localcontext() as context:
+        context.prec = 40
+        rounded = value.quantize(Decimal("0.01"))
+    if value != rounded:
+        raise ValueError("Importe fuera de NUMERIC(10,2)")
+    return rounded
+
+
+def _subtotal(price, quantity):
+    with localcontext() as context:
+        context.prec = 40
+        return _money(price * quantity)
+
+
+def _total(amounts):
+    with localcontext() as context:
+        context.prec = 40
+        return _money(sum(amounts, Decimal("0.00")))
+
+
+class DecentralizedRepository:
+    def __init__(self, engine=None):
+        self._engine = engine
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            from app.database.connection import get_engine
+
+            self._engine = get_engine()
+        return self._engine
+
+    @staticmethod
+    def _table(connection, name):
+        return Table(name, MetaData(), autoload_with=connection)
+
+    def _customer(self, connection, customer_id):
+        users = self._table(connection, "users")
+        row = connection.execute(select(users.c.id).where(
+            users.c.id == _id(customer_id), users.c.active.is_(True),
+            users.c.role == "CUSTOMER",
+        ).with_for_update()).first()
+        if row is None:
+            raise LookupError("Cliente no disponible")
+
+    def _ticket(self, connection, customer_id, ticket_id, *, lock=False):
+        tickets = self._table(connection, "tickets")
+        query = select(tickets).where(tickets.c.id == _id(ticket_id),
+                                       tickets.c.customer_id == _id(customer_id))
+        if lock:
+            query = query.with_for_update()
+        row = connection.execute(query).mappings().first()
+        if row is None:
+            raise LookupError("Ticket no encontrado")
+        return tickets, dict(row)
+
+    def create_ticket(self, *, customer_id, code, title, failure_description, request_type):
+        """code es una clave estable generada por el sistema ANTES del primer intento.
+
+        UNIQUE(code) y bloqueo del cliente evitan duplicados; reutilizar código
+        con distinto contenido falla. Un nuevo código representa otra operación.
+        """
+        from app.agents.decentralized.state import RequestType
+        from typing import get_args
+
+        if request_type not in get_args(RequestType):
+            raise ValueError("request_type no admitido por PostgreSQL v2")
+        values = dict(customer_id=_id(customer_id), code=_text(code, 20),
+                      title=_text(title, 200), failure_description=_text(failure_description),
+                      request_type=request_type)
+        with self.engine.begin() as connection:
+            self._customer(connection, customer_id)
+            tickets = self._table(connection, "tickets")
+            query = select(tickets).where(tickets.c.code == values["code"])
+            row = connection.execute(query).mappings().first()
+            if row is None:
+                try:
+                    with connection.begin_nested():
+                        ticket_id = connection.execute(insert(tickets).values(
+                            **values, status="NEW", diagnosis_type="NONE",
+                            is_remote_service=False,
+                        ).returning(tickets.c.id)).scalar_one()
+                    return self._ticket(connection, customer_id, ticket_id)[1]
+                except IntegrityError:
+                    # Colisión concurrente de UNIQUE(code); conservar la transacción.
+                    row = connection.execute(query).mappings().first()
+                    if row is None:
+                        raise
+            if any(row[key] != value for key, value in values.items()):
+                raise RetryConflict("Código de ticket ya utilizado")
+            return dict(row)
+
+    def get_ticket(self, *, customer_id, ticket_id):
+        with self.engine.connect() as connection:
+            return self._ticket(connection, customer_id, ticket_id)[1]
+
+    def list_tickets(self, *, customer_id):
+        with self.engine.connect() as connection:
+            tickets = self._table(connection, "tickets")
+            return [dict(row) for row in connection.execute(select(tickets).where(
+                tickets.c.customer_id == _id(customer_id)
+            ).order_by(tickets.c.id)).mappings()]
+
+    def search_inventory(self, *, term, category=None, limit=20):
+        """Código exacto primero; candidatos alternativos requieren selección."""
+        term = _text(term)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("Límite inválido")
+        with self.engine.connect() as connection:
+            parts = self._table(connection, "spare_parts")
+            query = select(parts).where(parts.c.active.is_(True))
+            if category is not None:
+                query = query.where(parts.c.category == _text(category, 50))
+            exact = connection.execute(query.where(parts.c.code == term)).mappings().first()
+            if exact:
+                return [dict(exact)]
+            pattern = "%" + term.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+            return [dict(row) for row in connection.execute(query.where(
+                parts.c.name.ilike(pattern, escape="!")
+                | parts.c.description.ilike(pattern, escape="!")
+                | parts.c.category.ilike(pattern, escape="!")
+            ).order_by(parts.c.code).limit(limit)).mappings()]
+
+    def get_inventory(self, *, spare_part_id, quantity):
+        _quantity(quantity)
+        with self.engine.connect() as connection:
+            parts = self._table(connection, "spare_parts")
+            row = connection.execute(select(parts).where(
+                parts.c.id == _id(spare_part_id), parts.c.active.is_(True),
+            )).mappings().first()
+            return {**row, "requested_quantity": quantity,
+                    "available": row["current_stock"] >= quantity} if row else None
+
+    def get_quote(self, *, customer_id, quote_id):
+        with self.engine.connect() as connection:
+            quotes = self._table(connection, "quotes")
+            tickets = self._table(connection, "tickets")
+            row = connection.execute(select(quotes).join(tickets, quotes.c.ticket_id == tickets.c.id).where(
+                quotes.c.id == _id(quote_id), tickets.c.customer_id == _id(customer_id),
+            )).mappings().first()
+            if row is None:
+                raise LookupError("Cotización no encontrada")
+            return {**row, "lines": self._lines(connection, row["id"])}
+
+    def list_quotes(self, *, customer_id, ticket_id):
+        with self.engine.connect() as connection:
+            self._ticket(connection, customer_id, ticket_id)
+            quotes = self._table(connection, "quotes")
+            return [{**row, "lines": self._lines(connection, row["id"])}
+                    for row in connection.execute(select(quotes).where(
+                        quotes.c.ticket_id == ticket_id
+                    ).order_by(quotes.c.id)).mappings()]
+
+    def _lines(self, connection, quote_id):
+        details = self._table(connection, "quote_details")
+        return [dict(row) for row in connection.execute(select(details).where(
+            details.c.quote_id == quote_id
+        ).order_by(details.c.spare_part_id)).mappings()]
+
+    def create_accepted_quote(self, *, customer_id, ticket_id, quote_type,
+                              labor_cost, lines, explicitly_accepted, observations=None):
+        """Una cotización aceptada por ticket para este adaptador, sin cambiar el DDL.
+
+        Bloquear ticket antes de consultar/insertar serializa reintentos PostgreSQL.
+        Una propuesta distinta sobre un ticket ya aceptado requiere reconciliación,
+        nunca una inserción silenciosa. Precios externos aún no están soportados.
+        explicitly_accepted exige el booleano True; no valida la revisión
+        conversacional. El consumidor debe validar la propuesta vigente en state.py
+        antes de llamar. Este adaptador sólo revalida pertenencia, precio y stock.
+        """
+        if explicitly_accepted is not True:
+            raise ValueError("Falta aceptación explícita")
+        if quote_type not in {"REPAIR", "DIRECT_SALE", "PC_BUILD"}:
+            raise ValueError("quote_type no admitido")
+        labor_cost = _money(labor_cost)
+        if quote_type == "DIRECT_SALE" and labor_cost != 0:
+            raise ValueError("Venta directa sin mano de obra")
+        if observations is not None:
+            observations = _text(observations)
+        normalized = []
+        seen = set()
+        for line in lines:
+            if line.get("custom_item_name") is not None:
+                raise ValueError("Artículo externo sin cotización verificable")
+            part_id = _id(line["spare_part_id"])
+            if part_id in seen:
+                raise ValueError("Repuesto duplicado; consolidar cantidades")
+            seen.add(part_id)
+            quantity = _quantity(line["quantity"])
+            price = _money(line["unit_price"])
+            subtotal = _subtotal(price, quantity)
+            if "subtotal" in line and _money(line["subtotal"]) != subtotal:
+                raise ValueError("Subtotal no coincide con la propuesta")
+            normalized.append(dict(spare_part_id=part_id, custom_item_name=None,
+                                   quantity=quantity, unit_price=price, subtotal=subtotal))
+        normalized.sort(key=lambda line: line["spare_part_id"])
+        if not normalized and quote_type != "REPAIR":
+            raise ValueError("Faltan artículos")
+        parts_cost = _total(line["subtotal"] for line in normalized)
+        total = _total([labor_cost, parts_cost])
+        with self.engine.begin() as connection:
+            self._customer(connection, customer_id)
+            tickets, ticket = self._ticket(connection, customer_id, ticket_id, lock=True)
+            allowed = {"REPAIR": {"REPAIR", "SUPPORT"}, "DIRECT_SALE": {"SALE"}, "PC_BUILD": {"PC_BUILD"}}
+            if ticket["request_type"] not in allowed[quote_type]:
+                raise ValueError("Tipo de cotización incompatible con ticket")
+            quotes = self._table(connection, "quotes")
+            existing = list(connection.execute(select(quotes).where(
+                quotes.c.ticket_id == ticket_id, quotes.c.status == "ACCEPTED",
+            )).mappings())
+            values = dict(ticket_id=ticket_id, quote_type=quote_type, labor_cost=labor_cost,
+                          parts_cost=parts_cost, total_amount=total, status="ACCEPTED",
+                          observations=observations)
+            if existing:
+                saved_lines = self._lines(connection, existing[0]["id"])
+                matches = [{key: line[key] for key in normalized[0]} for line in saved_lines] if normalized else []
+                if (len(existing) != 1 or any(existing[0][key] != value for key, value in values.items())
+                        or len(saved_lines) != len(normalized) or matches != normalized):
+                    raise RetryConflict("Ticket con cotización aceptada diferente")
+                return {**existing[0], "lines": saved_lines}
+            if ticket["status"] not in {"NEW", "IN_DIAGNOSIS"}:
+                raise ValueError("Ticket no admite nueva cotización")
+            parts = self._table(connection, "spare_parts")
+            for line in normalized:
+                item = connection.execute(select(parts).where(
+                    parts.c.id == line["spare_part_id"], parts.c.active.is_(True),
+                ).with_for_update()).mappings().first()
+                if (item is None or item["current_stock"] < line["quantity"]
+                        or item["unit_price"] != line["unit_price"]):
+                    raise ValueError("Inventario o precio cambió; renovar propuesta")
+            quote_id = connection.execute(insert(quotes).values(**values).returning(quotes.c.id)).scalar_one()
+            details = self._table(connection, "quote_details")
+            for line in normalized:
+                connection.execute(insert(details).values(quote_id=quote_id, **line))
+            result = connection.execute(update(tickets).where(
+                tickets.c.id == ticket_id, tickets.c.customer_id == customer_id,
+            ).values(status="QUOTED"))
+            if result.rowcount != 1:
+                raise RuntimeError("No se actualizó el ticket")
+            return {**connection.execute(select(quotes).where(quotes.c.id == quote_id)).mappings().one(),
+                    "lines": self._lines(connection, quote_id)}
