@@ -1,9 +1,9 @@
-"""Reference chat pattern: implements the shared contract with a deterministic LangGraph graph.
+"""Patrón de referencia del chat: implementa el contrato común con un grafo LangGraph determinista.
 
-Used to test the frontend and the session without depending on Groq. The team patterns replace the graph
-with their own and keep the route, the session dependency and the response format.
+Sirve para probar el frontend y la sesión sin depender de Groq. Los patrones del equipo reemplazan el grafo
+por el suyo y mantienen la ruta, la dependencia de sesión y el formato de respuesta.
 
-Run:  uvicorn app.chat.reference:create_reference_app --factory --host localhost --port 8001
+Ejecutar:  uvicorn app.chat.reference:create_reference_app --factory --host localhost --port 8001
 """
 import logging
 import secrets
@@ -31,7 +31,7 @@ from app.chat.models import Ticket, TicketStatus
 
 logger = logging.getLogger(__name__)
 
-# Customer keywords: the chat is in Spanish, so the matched terms stay in Spanish.
+# Palabras clave del cliente: el chat es en español, por eso los términos se buscan en español.
 STORAGE_WORDS = ("ssd", "disco", "almacenamiento", "no detecta", "lento", "lentitud")
 
 
@@ -45,7 +45,7 @@ class ChatState(TypedDict, total=False):
 
 
 def attention(state: ChatState) -> dict:
-    """Attention agent: asks for more details if the message does not describe the device and symptom."""
+    """Agente de atención: pide más datos si el mensaje no describe equipo y síntoma."""
     if len(state["message"].split()) < 4:
         return {
             "reply": (
@@ -59,7 +59,7 @@ def attention(state: ChatState) -> dict:
 
 
 def technical_support(state: ChatState) -> dict:
-    """Reference technical agent: provisional diagnosis from keywords."""
+    """Agente técnico de referencia: diagnóstico provisional por palabras clave."""
     text = state["message"].lower()
     if any(word in text for word in STORAGE_WORDS):
         return {"diagnosis": "Posible falla de la unidad de almacenamiento.",
@@ -136,7 +136,7 @@ def create_reference_app(settings: Settings | None = None, session_factory: sess
         with lock:
             if body.conversation_id:
                 conv = conversations.get(body.conversation_id)
-                # Same response whether it does not exist or belongs to another customer.
+                # Igual respuesta si no existe o es de otro cliente.
                 if conv is None or conv["customer_id"] != customer.id:
                     return JSONResponse(status_code=404, content={"detail": "Conversación no encontrada."})
                 conversation_id = body.conversation_id

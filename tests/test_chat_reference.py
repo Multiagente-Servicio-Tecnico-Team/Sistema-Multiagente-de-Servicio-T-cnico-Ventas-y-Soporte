@@ -1,4 +1,4 @@
-"""POST /api/chat contract tests with the reference pattern and the sign-in session."""
+"""Pruebas del contrato POST /api/chat con el patrón de referencia y la sesión del login."""
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -67,7 +67,7 @@ def test_asks_for_details_when_message_is_short(env):
 def test_quote_and_ticket_belong_to_session_customer(env):
     accounts, app, factory = env
     client = chat_client(accounts, app, "ana@demo.pe")
-    # An email or customer_id in the body does not change the identified customer.
+    # Un correo o customer_id en el cuerpo no cambia al cliente identificado.
     res = client.post("/api/chat", json={"message": PROBLEM, "email": "luis@demo.pe", "customer_id": 2})
     body = res.json()
 

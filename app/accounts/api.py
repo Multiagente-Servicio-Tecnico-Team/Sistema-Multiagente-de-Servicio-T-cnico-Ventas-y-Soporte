@@ -1,8 +1,8 @@
-"""Accounts API: sign-up, sign-in, sign-out, password recovery and password reset.
+"""API de cuentas: registro, inicio y cierre de sesión, recuperación y restablecimiento de contraseña.
 
-The public routes (/registro, /login, /recuperar, /restablecer) and their JSON keys are the team contract.
+Las rutas públicas (/registro, /login, /recuperar, /restablecer) y sus claves JSON son el contrato del equipo.
 
-Run:  uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
+Ejecutar:  uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
 """
 import logging
 from urllib.parse import quote
@@ -46,13 +46,13 @@ INVALID_TOKEN = "El enlace no es válido o ya expiró."
 
 
 def _validation_response(exc: RequestValidationError) -> JSONResponse:
-    """422 without echoing the submitted values (they could include the password)."""
+    """422 sin devolver los valores enviados (podrían incluir la contraseña)."""
     errors = []
     for err in exc.errors():
         loc = [str(part) for part in err.get("loc", ()) if part != "body"]
         message = str(err.get("msg", "Valor inválido.")).removeprefix("Value error, ")
         field_name = loc[0] if loc else ("nombre" if err.get("type") == FULL_NAME_ERROR else None)
-        # "campo" and "mensaje" are the JSON keys of the error contract used by the frontend.
+        # "campo" y "mensaje" son las claves JSON del contrato de errores que usa el frontend.
         errors.append({"campo": field_name, "mensaje": message})
     field = next((e["campo"] for e in errors if e["campo"]), None)
     return JSONResponse(status_code=422, content={"detail": "Datos inválidos.", "field": field, "errors": errors})
@@ -149,7 +149,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
     def me(request: Request, db: Session = Depends(get_db)):
         session = read_session(request.cookies.get(settings.cookie_name), settings.auth_secret)
         user = db.get(User, session[0]) if session else None
-        # A cookie issued before the password changed is no longer valid.
+        # Una cookie emitida antes de cambiar la contraseña ya no es válida.
         if user is None or not user.active or session[1] != password_fingerprint(user.password_hash, settings.auth_secret):
             return JSONResponse(status_code=401, content={"detail": "Sesión no válida o vencida."})
         return UserResponse(user=to_out(user))
@@ -164,7 +164,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
         if result is not None:
             user, raw_token = result
             link = f"{settings.frontend_url}/portal/restablecer?token={quote(raw_token)}"
-            # Sent in the background: the response takes the same time whether or not the account exists.
+            # El envío va en segundo plano: la respuesta tarda lo mismo exista o no la cuenta.
             background.add_task(send_password_reset, app.state.mailer, user.email, user.name, link, settings.reset_minutes)
         return {"detail": RESET_SENT}
 
@@ -179,7 +179,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
     @app.get("/salud")
     def health(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1"))
-        # "estado" and "bd" are the JSON keys checked by the Postman collection.
+        # "estado" y "bd" son las claves JSON que verifica la colección de Postman.
         return {"estado": "ok", "bd": "ok"}
 
     return app

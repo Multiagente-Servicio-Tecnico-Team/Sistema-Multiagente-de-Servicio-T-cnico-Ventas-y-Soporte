@@ -1,4 +1,4 @@
-"""Tests for the reusable session dependency (SessionGuard)."""
+"""Pruebas de la dependencia de sesión reutilizable (SessionGuard)."""
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient

@@ -1,4 +1,4 @@
-"""Accounts service settings read from environment variables."""
+"""Configuración del servicio de cuentas leída de variables de entorno."""
 import logging
 import os
 import secrets
@@ -36,7 +36,7 @@ class Settings:
     def from_env(cls) -> "Settings":
         secret = os.getenv("AUTH_SECRET", "")
         if not secret:
-            # Development only: sessions are invalidated when the server restarts.
+            # Solo para desarrollo: las sesiones se invalidan al reiniciar el servidor.
             logger.warning("AUTH_SECRET is not set; using a temporary secret.")
             secret = secrets.token_urlsafe(48)
         if len(secret) < 32:

@@ -1,4 +1,4 @@
-"""Accounts API tests with in-memory SQLite; PostgreSQL is not required."""
+"""Pruebas de la API de cuentas con SQLite en memoria; no requieren PostgreSQL."""
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
@@ -175,7 +175,7 @@ def test_logout_clears_session(env):
     assert client.get("/me").status_code == 401
 
 
-# ---------- CORS and health ----------
+# ---------- CORS y salud ----------
 
 def test_cors_only_for_configured_frontend(env):
     client, _ = env
@@ -194,7 +194,7 @@ def test_health(env):
 
 
 def test_concurrent_register_respects_uniqueness(env):
-    """If two sign-ups pass the first check, the UNIQUE constraint returns 409."""
+    """Si dos registros pasan la verificación previa, la restricción UNIQUE devuelve 409."""
     _, factory = env
     from app.accounts.schemas import RegisterIn
     from app.accounts.service import EmailAlreadyRegistered, register_user

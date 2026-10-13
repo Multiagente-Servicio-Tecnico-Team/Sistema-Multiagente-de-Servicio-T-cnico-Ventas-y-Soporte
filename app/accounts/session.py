@@ -1,15 +1,15 @@
-"""Reusable session: any team API identifies the user with the sign-in cookie.
+"""Sesión reutilizable: cualquier API del equipo identifica al usuario con la cookie del login.
 
-Usage in the API of a LangGraph pattern:
+Uso en la API de un patrón LangGraph:
 
     guard = SessionGuard.from_env()
     guard.install(app)
 
     @app.post("/api/chat")
     def chat(body: ChatIn, customer: SessionCustomer = Depends(guard.require_customer)):
-        ...  # customer.id goes to tickets.customer_id
+        ...  # customer.id va a tickets.customer_id
 
-Identity comes only from the signed cookie, never from the request body.
+La identidad sale solo de la cookie firmada; nunca del cuerpo de la petición.
 """
 import os
 from dataclasses import dataclass
@@ -55,7 +55,7 @@ class SessionGuard:
 
     @classmethod
     def from_env(cls, session_factory: sessionmaker | None = None) -> "SessionGuard":
-        """For other APIs: requires the same AUTH_SECRET and DATABASE_URL as the accounts API."""
+        """Para otras APIs: exige el mismo AUTH_SECRET y DATABASE_URL que la API de cuentas."""
         load_dotenv()
         if not os.getenv("AUTH_SECRET"):
             raise RuntimeError("AUTH_SECRET must match the one used by the accounts API.")
@@ -68,7 +68,7 @@ class SessionGuard:
         return cls(settings, session_factory)
 
     def resolve(self, request: Request) -> User | None:
-        """Active user from the cookie, or None if missing, invalid, expired or the password changed."""
+        """Usuario activo de la cookie, o None si falta, es inválida, venció o la contraseña cambió."""
         session = read_session(request.cookies.get(self.settings.cookie_name), self.settings.auth_secret)
         if not session:
             return None

@@ -1,4 +1,4 @@
-"""Password reset email delivery: real SMTP or a local folder (outbox) for development."""
+"""Envío del correo de restablecimiento: SMTP real o carpeta local (outbox) para desarrollo."""
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +18,7 @@ def render_password_reset(name: str, link: str, minutes: int) -> str:
 
 
 class OutboxMailer:
-    """Saves each email as an HTML file in a local folder ignored by git."""
+    """Guarda cada correo como archivo HTML en una carpeta local ignorada por git."""
 
     def __init__(self, directory: str | Path):
         self.directory = Path(directory)
@@ -31,7 +31,7 @@ class OutboxMailer:
 
 
 class SmtpMailer:
-    """Uses the repository SMTP service (SMTP_* variables)."""
+    """Usa el servicio SMTP existente del repositorio (variables SMTP_*)."""
 
     def send(self, to: str, subject: str, html: str) -> None:
         from app.email.email_service import _send_email_sync
@@ -44,8 +44,8 @@ def build_mailer(mode: str, outbox_dir: str):
 
 
 def send_password_reset(mailer, to: str, name: str, link: str, minutes: int) -> None:
-    """Runs in the background. A failure is logged without the email address, link or token."""
+    """Se ejecuta en segundo plano. Un fallo se registra sin correo, enlace ni token."""
     try:
         mailer.send(to, SUBJECT, render_password_reset(name, link, minutes))
-    except Exception:  # noqa: BLE001 - the user already got the generic response
+    except Exception:  # noqa: BLE001 - el usuario ya recibió la respuesta genérica
         logger.error("Could not send the password reset email.")

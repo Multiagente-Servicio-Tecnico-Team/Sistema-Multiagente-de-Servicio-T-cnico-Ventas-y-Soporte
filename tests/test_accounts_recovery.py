@@ -1,4 +1,4 @@
-"""Tests for /recuperar and /restablecer with in-memory SQLite and a fake mailer."""
+"""Pruebas de /recuperar y /restablecer con SQLite en memoria y un correo simulado."""
 import hashlib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
@@ -208,7 +208,7 @@ def test_reset_clears_failed_attempts(env):
     assert login(client, NEW_PASSWORD).status_code == 200
 
 
-# ---------- Email ----------
+# ---------- Correo ----------
 
 def test_outbox_saves_email_to_file(tmp_path):
     path = OutboxMailer(tmp_path).send("ana@demo.pe", "Asunto", "<p>hola</p>")

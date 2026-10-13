@@ -1,22 +1,22 @@
-"""Request and response bodies. The rules mirror the frontend form.
+"""Cuerpos de petición y respuesta. Las reglas repiten las del formulario del frontend.
 
-Python attributes are in English; the JSON keys of the public contract stay in Spanish through aliases
-(nombre, apellido, telefono, usuario, rol), so the frontend, Postman and the pattern APIs keep working.
+Los atributos de Python están en inglés; las claves JSON del contrato siguen en español mediante alias
+(nombre, apellido, telefono, usuario, rol), así el frontend, Postman y las APIs de los patrones no cambian.
 """
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
-# Same pattern as the chk_email_format constraint in the database script.
+# Mismo patrón que la restricción chk_email_format del script de BD.
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 PHONE_RE = re.compile(r"^\+\d{8,15}$")
-# Error type that lets the API report the "nombre" field when the error belongs to the whole model.
+# Tipo de error que permite a la API indicar el campo "nombre" aunque el error sea del modelo completo.
 FULL_NAME_ERROR = "full_name"
 
 
 def check_password_policy(value: str) -> str:
-    """Shared rule for sign-up and reset: 8 to 72 bytes, an uppercase letter, a digit and a symbol."""
+    """Política común de registro y restablecimiento: 8 a 72 bytes, mayúscula, número y símbolo."""
     size = len(value.encode("utf-8"))
     checks = [
         8 <= size <= 72,
@@ -68,7 +68,7 @@ class RegisterIn(BaseModel):
         first_name = " ".join(self.first_name.split())
         last_name = " ".join(self.last_name.split()) if self.last_name else None
         if last_name is None and " " in first_name:
-            # The Figma form has a single "Nombre y Apellido" field.
+            # El formulario de Figma tiene un solo campo "Nombre y Apellido".
             first_name, last_name = first_name.split(" ", 1)
         if len(f"{first_name} {last_name or ''}".strip()) < 3 or not first_name:
             raise PydanticCustomError(FULL_NAME_ERROR, "Ingresa tu nombre y apellido.")
