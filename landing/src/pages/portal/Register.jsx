@@ -9,10 +9,10 @@ import { FormAlert } from "./Login.jsx";
 
 export { PASSWORD_RULES } from "../../components/PasswordFields.jsx";
 
-// POST /registro contract fields -> form fields.
+// Campos del contrato POST /registro -> campos del formulario.
 const API_FIELDS = { nombre: "name", email: "email", telefono: "phone", password: "password" };
 
-/** Validates the sign-up form; returns an object { field: message }. */
+/** Valida el formulario de registro; devuelve un objeto { campo: mensaje }. */
 export function validateRegister(form) {
   const errors = {};
   if (form.name.trim().length < 3) errors.name = "Ingresa tu nombre y apellido.";
@@ -35,7 +35,7 @@ export default function Register({ api = defaultApi }) {
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
   const emailOk = EMAIL_RE.test(form.email.trim());
 
-  // A customer with an open session does not need to sign up again.
+  // Un cliente con sesión abierta no necesita registrarse de nuevo.
   if (session?.role === "client" && !loading) return <Navigate to="/portal/tickets" replace />;
 
   const submit = async (e) => {
@@ -48,15 +48,15 @@ export default function Register({ api = defaultApi }) {
 
     setLoading(true);
     try {
-      const { firstName, lastName } = splitFullName(form.name);
-      const user = await api.register({
-        firstName,
-        lastName,
+      const { nombre, apellido } = splitFullName(form.name);
+      const usuario = await api.register({
+        nombre,
+        apellido,
         email: form.email,
-        phone: toE164(form.prefix, form.phone),
+        telefono: toE164(form.prefix, form.phone),
         password: form.password,
       });
-      login({ role: "client", email: user.email, name: fullName(user) || form.name.trim() });
+      login({ role: "client", email: usuario.email, name: fullName(usuario) || form.name.trim() });
       navigate("/portal/tickets", { replace: true });
     } catch (err) {
       const field = API_FIELDS[err?.field];

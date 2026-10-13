@@ -1,4 +1,4 @@
-"""Sign-up, sign-in and password reset rules."""
+"""Reglas de registro, inicio de sesión y restablecimiento de contraseña."""
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.accounts.models import RecoveryToken, User
-from app.accounts.schemas import RegisterIn, UserOut
+from app.accounts.schemas import RegistroIn, UsuarioOut
 from app.accounts.security import hash_password, hash_reset_token, new_reset_token, verify_password
 
 
@@ -14,31 +14,31 @@ class EmailAlreadyRegistered(Exception):
     pass
 
 
-def to_out(user: User) -> UserOut:
+def to_out(user: User) -> UsuarioOut:
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    return UserOut(id=user.id, first_name=user.name, last_name=user.last_name, email=user.email, role=role)
+    return UsuarioOut(id=user.id, nombre=user.name, apellido=user.last_name, email=user.email, rol=role)
 
 
 def find_by_email(db: Session, email: str) -> User | None:
     return db.scalar(select(User).where(func.lower(User.email) == email.lower()))
 
 
-def register_user(db: Session, data: RegisterIn, rounds: int) -> User:
-    """Creates a customer. The role stays CUSTOMER through the table default."""
+def register_user(db: Session, data: RegistroIn, rounds: int) -> User:
+    """Crea un cliente. El rol queda en CUSTOMER por el valor por defecto de la tabla."""
     if find_by_email(db, data.email):
         raise EmailAlreadyRegistered()
     user = User(
         email=data.email,
-        phone=data.phone,
+        phone=data.telefono,
         password_hash=hash_password(data.password, rounds),
-        name=data.first_name,
-        last_name=data.last_name,
+        name=data.nombre,
+        last_name=data.apellido,
     )
     db.add(user)
     try:
         db.commit()
     except IntegrityError as exc:
-        # Two simultaneous sign-ups with the same email: the UNIQUE constraint settles it.
+        # Dos registros simultáneos con el mismo correo: lo resuelve la restricción UNIQUE.
         db.rollback()
         raise EmailAlreadyRegistered() from exc
     db.refresh(user)
@@ -46,7 +46,7 @@ def register_user(db: Session, data: RegisterIn, rounds: int) -> User:
 
 
 def authenticate(db: Session, email: str, password: str, fallback_hash: str) -> User | None:
-    """Returns the active user if the password matches. Always runs one bcrypt check."""
+    """Devuelve el usuario activo si la contraseña coincide. Siempre ejecuta una verificación bcrypt."""
     user = find_by_email(db, email)
     if user is None:
         verify_password(password, fallback_hash)
@@ -57,7 +57,7 @@ def authenticate(db: Session, email: str, password: str, fallback_hash: str) -> 
 
 
 def _utc(value: datetime) -> datetime:
-    # SQLite returns naive datetimes; PostgreSQL (timestamptz) returns aware ones.
+    # SQLite devuelve fechas sin zona; PostgreSQL (timestamptz) con zona.
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
@@ -70,9 +70,9 @@ def _invalidate_tokens(db: Session, user_id: int) -> None:
 
 
 def request_password_reset(db: Session, email: str, minutes: int) -> tuple[User, str] | None:
-    """Creates a token if the account exists and is active. Returns (user, link token) or None.
+    """Crea un token si la cuenta existe y está activa. Devuelve (usuario, token del enlace) o None.
 
-    Only the latest link is valid: earlier pending tokens are marked as used.
+    Solo el último enlace vale: los tokens pendientes anteriores se marcan como usados.
     """
     user = find_by_email(db, email)
     if user is None or not user.active:
@@ -85,7 +85,7 @@ def request_password_reset(db: Session, email: str, minutes: int) -> tuple[User,
 
 
 def reset_password(db: Session, raw_token: str, new_password: str, rounds: int) -> User | None:
-    """Changes the password if the token is valid, unexpired and unused. Returns the user or None."""
+    """Cambia la contraseña si el token es válido, vigente y sin usar. Devuelve el usuario o None."""
     row = db.scalar(select(RecoveryToken).where(RecoveryToken.token == hash_reset_token(raw_token)))
     now = datetime.now(timezone.utc)
     if row is None or row.used or _utc(row.expires_at) <= now:
@@ -93,7 +93,7 @@ def reset_password(db: Session, raw_token: str, new_password: str, rounds: int) 
     user = db.get(User, row.user_id)
     if user is None or not user.active:
         return None
-    # Conditional update: if two requests use the same link at once, only one wins.
+    # Marcado condicional: si dos peticiones usan el mismo enlace a la vez, solo una gana.
     claimed = db.execute(
         update(RecoveryToken).where(RecoveryToken.id == row.id, RecoveryToken.used.is_(False)).values(used=True)
     )

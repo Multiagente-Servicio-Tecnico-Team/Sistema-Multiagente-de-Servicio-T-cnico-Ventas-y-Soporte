@@ -20,26 +20,26 @@ function renderApp(path, session) {
 
 const client = { role: "client", name: "Ana Torres", email: "ana@demo.pe" };
 
-describe("open session", () => {
-  it("sign-in redirects to the portal when a customer session exists", async () => {
+describe("sesión abierta", () => {
+  it("el acceso redirige al portal si ya hay sesión de cliente", async () => {
     renderApp("/portal/acceso", client);
     expect(await screen.findByRole("heading", { name: "Mis Tickets de Atención" })).toBeInTheDocument();
   });
 
-  it("sign-up redirects to the portal when a customer session exists", async () => {
+  it("el registro redirige al portal si ya hay sesión de cliente", async () => {
     renderApp("/portal/registro", client);
     expect(await screen.findByRole("heading", { name: "Mis Tickets de Atención" })).toBeInTheDocument();
   });
 
-  it("the landing offers to go back to the portal instead of signing in", () => {
+  it("la landing ofrece volver al portal en lugar de iniciar sesión", () => {
     renderApp("/", client);
     expect(screen.getByRole("link", { name: "Ir a mi portal" })).toHaveAttribute("href", "/portal/tickets");
     expect(screen.queryByRole("link", { name: "Iniciar sesión" })).not.toBeInTheDocument();
   });
 });
 
-describe("sign out", () => {
-  it("goes back to the landing and protected routes ask for access again", async () => {
+describe("cerrar sesión", () => {
+  it("vuelve a la landing y las rutas protegidas piden acceso otra vez", async () => {
     const user = userEvent.setup();
     renderApp("/portal/tickets", client);
 
@@ -54,8 +54,8 @@ describe("sign out", () => {
   });
 });
 
-describe("new request from the chat", () => {
-  it("asks for device and fault, creates the ticket and shows it in Mis Tickets", async () => {
+describe("nueva consulta desde el chat", () => {
+  it("pide equipo y falla, crea el ticket y lo muestra en Mis Tickets", async () => {
     const user = userEvent.setup();
     renderApp("/portal/asistente", client);
 
@@ -75,7 +75,7 @@ describe("new request from the chat", () => {
     expect(within(card).getByText("Por cotizar")).toBeInTheDocument();
   });
 
-  it("an existing ticket opens its conversation with a quote", () => {
+  it("el ticket existente abre su conversación con presupuesto", () => {
     renderApp("/portal/asistente?ticket=TCK-2041", client);
     expect(screen.getByRole("heading", { name: "Diagnóstico Asistido y Cotización Inteligente" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /aceptar presupuesto/i })).toBeInTheDocument();

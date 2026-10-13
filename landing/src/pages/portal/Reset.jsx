@@ -7,13 +7,13 @@ import { authApi as defaultApi, MESSAGES } from "../../api/auth.js";
 import { FormAlert } from "./Login.jsx";
 
 /**
- * Added screen: target of the link sent by /recuperar.
- * Reads ?token= from the URL and sends POST /restablecer { token, password }.
+ * Pantalla creada: destino del enlace que envía /recuperar.
+ * Lee ?token= de la URL y envía POST /restablecer { token, password }.
  */
 export default function Reset({ api = defaultApi }) {
   const [params] = useSearchParams();
   const token = params.get("token") || "";
-  // A different link resets the form and its state.
+  // Un enlace distinto reinicia el formulario y sus estados.
   return <ResetForm key={token} token={token} api={api} />;
 }
 

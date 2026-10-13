@@ -31,7 +31,7 @@ async function fillValid(user) {
 const validForm = { name: "Martín Gómez", email: "m@g.pe", phone: "987654321", password: "TriageTech#2026", confirm: "TriageTech#2026", terms: true };
 
 describe("validateRegister", () => {
-  it("accepts a complete form", () => {
+  it("acepta un formulario completo", () => {
     expect(validateRegister(validForm)).toEqual({});
   });
 
@@ -42,13 +42,13 @@ describe("validateRegister", () => {
     ["phone", { phone: "1234" }],
     ["email", { email: "no-es-correo" }],
     ["terms", { terms: false }],
-  ])("flags the %s field when it is invalid", (field, patch) => {
+  ])("marca el campo %s cuando es inválido", (field, patch) => {
     expect(validateRegister({ ...validForm, ...patch })).toHaveProperty(field);
   });
 });
 
-describe("sign-up screen", () => {
-  it("shows errors and does not call the API when the form is empty", async () => {
+describe("pantalla de registro", () => {
+  it("muestra errores y no llama a la API si el formulario está vacío", async () => {
     const api = { mode: "api", register: vi.fn() };
     const user = userEvent.setup();
     renderRegister(api);
@@ -60,7 +60,7 @@ describe("sign-up screen", () => {
     expect(api.register).not.toHaveBeenCalled();
   });
 
-  it("updates the password requirements list", async () => {
+  it("actualiza la lista de requisitos de la contraseña", async () => {
     const user = userEvent.setup();
     renderRegister({ mode: "api", register: vi.fn() });
 
@@ -72,7 +72,7 @@ describe("sign-up screen", () => {
     expect(screen.getByText(/Seguridad: Fuerte/)).toBeInTheDocument();
   });
 
-  it("signs up with an E.164 phone, opens the session and does not store the password", async () => {
+  it("registra con teléfono E.164, abre la sesión y no guarda la contraseña", async () => {
     const api = { mode: "api", register: vi.fn().mockResolvedValue({ nombre: "Martín", apellido: "Gómez", email: "martin.gomez@gmail.com", rol: "CUSTOMER" }) };
     const user = userEvent.setup();
     renderRegister(api);
@@ -81,12 +81,12 @@ describe("sign-up screen", () => {
     await user.click(screen.getByRole("button", { name: /crear mi cuenta/i }));
 
     expect(await screen.findByRole("heading", { name: "Mis Tickets" })).toBeInTheDocument();
-    // First and last name split for the name and last_name columns of users.
+    // Nombre y apellido separados para las columnas name y last_name de users.
     expect(api.register).toHaveBeenCalledWith({
-      firstName: "Martín",
-      lastName: "Gómez",
+      nombre: "Martín",
+      apellido: "Gómez",
       email: "martin.gomez@gmail.com",
-      phone: "+51987654321",
+      telefono: "+51987654321",
       password: "TriageTech#2026",
     });
     const stored = sessionStorage.getItem("techfix.session");
@@ -94,7 +94,7 @@ describe("sign-up screen", () => {
     expect(stored).not.toContain("TriageTech");
   });
 
-  it("shows the duplicate email error on the matching field", async () => {
+  it("muestra el error de correo duplicado en el campo correspondiente", async () => {
     const api = { mode: "api", register: vi.fn().mockRejectedValue(new ApiError(MESSAGES.duplicateEmail, { status: 409, field: "email" })) };
     const user = userEvent.setup();
     renderRegister(api);

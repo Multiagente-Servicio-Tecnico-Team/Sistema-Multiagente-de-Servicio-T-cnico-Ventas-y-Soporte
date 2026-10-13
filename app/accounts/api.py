@@ -1,8 +1,6 @@
-"""Accounts API: sign-up, sign-in, sign-out, password recovery and password reset.
+"""API de cuentas: registro, inicio y cierre de sesión, recuperación y restablecimiento de contraseña.
 
-The public routes (/registro, /login, /recuperar, /restablecer) and their JSON keys are the team contract.
-
-Run:  uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
+Ejecutar:  uvicorn app.accounts.api:create_app --factory --host localhost --port 8000
 """
 import logging
 from urllib.parse import quote
@@ -19,14 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.accounts.config import Settings
 from app.accounts.mailer import build_mailer, send_password_reset
 from app.accounts.models import User
-from app.accounts.schemas import (
-    FULL_NAME_ERROR,
-    LoginIn,
-    PasswordRecoveryIn,
-    PasswordResetIn,
-    RegisterIn,
-    UserResponse,
-)
+from app.accounts.schemas import LoginIn, RecuperarIn, RegistroIn, RestablecerIn, UsuarioRespuesta
 from app.accounts.security import LoginLimiter, dummy_hash, password_fingerprint, read_session, sign_session
 from app.accounts.service import (
     EmailAlreadyRegistered,
@@ -46,14 +37,13 @@ INVALID_TOKEN = "El enlace no es válido o ya expiró."
 
 
 def _validation_response(exc: RequestValidationError) -> JSONResponse:
-    """422 without echoing the submitted values (they could include the password)."""
+    """422 sin devolver los valores enviados (podrían incluir la contraseña)."""
     errors = []
     for err in exc.errors():
         loc = [str(part) for part in err.get("loc", ()) if part != "body"]
         message = str(err.get("msg", "Valor inválido.")).removeprefix("Value error, ")
-        field_name = loc[0] if loc else ("nombre" if err.get("type") == FULL_NAME_ERROR else None)
-        # "campo" and "mensaje" are the JSON keys of the error contract used by the frontend.
-        errors.append({"campo": field_name, "mensaje": message})
+        campo = loc[0] if loc else ("nombre" if err.get("type") == "nombre" else None)
+        errors.append({"campo": campo, "mensaje": message})
     field = next((e["campo"] for e in errors if e["campo"]), None)
     return JSONResponse(status_code=422, content={"detail": "Datos inválidos.", "field": field, "errors": errors})
 
@@ -63,7 +53,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
     settings = settings or Settings.from_env()
     if session_factory is None:
         if not settings.database_url:
-            raise RuntimeError("DATABASE_URL is not configured.")
+            raise RuntimeError("DATABASE_URL no está configurada.")
         engine = create_engine(settings.database_url, pool_pre_ping=True)
         session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
@@ -97,7 +87,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
 
     @app.exception_handler(OperationalError)
     async def on_db_unavailable(_request: Request, _exc: OperationalError):
-        logger.error("Database unavailable")
+        logger.error("Base de datos no disponible")
         return JSONResponse(status_code=503, content={"detail": "Servicio no disponible. Inténtalo más tarde."})
 
     def get_db():
@@ -118,15 +108,15 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
             path="/",
         )
 
-    @app.post("/registro", status_code=201, response_model=UserResponse)
-    def register(body: RegisterIn, db: Session = Depends(get_db)):
+    @app.post("/registro", status_code=201, response_model=UsuarioRespuesta)
+    def registro(body: RegistroIn, db: Session = Depends(get_db)):
         try:
             user = register_user(db, body, settings.bcrypt_rounds)
         except EmailAlreadyRegistered:
             return JSONResponse(status_code=409, content={"detail": "El correo ya está registrado.", "field": "email"})
-        return UserResponse(user=to_out(user))
+        return {"usuario": to_out(user)}
 
-    @app.post("/login", response_model=UserResponse)
+    @app.post("/login", response_model=UsuarioRespuesta)
     def login(body: LoginIn, response: Response, db: Session = Depends(get_db)):
         limiter: LoginLimiter = app.state.limiter
         if limiter.blocked(body.email):
@@ -137,7 +127,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
             return JSONResponse(status_code=401, content={"detail": INVALID_CREDENTIALS})
         limiter.reset(body.email)
         set_session_cookie(response, user)
-        return UserResponse(user=to_out(user))
+        return {"usuario": to_out(user)}
 
     @app.post("/logout", status_code=204)
     def logout():
@@ -145,17 +135,17 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
         response.delete_cookie(settings.cookie_name, path="/", httponly=True, secure=settings.secure_cookie, samesite="lax")
         return response
 
-    @app.get("/me", response_model=UserResponse)
+    @app.get("/me", response_model=UsuarioRespuesta)
     def me(request: Request, db: Session = Depends(get_db)):
         session = read_session(request.cookies.get(settings.cookie_name), settings.auth_secret)
         user = db.get(User, session[0]) if session else None
-        # A cookie issued before the password changed is no longer valid.
+        # Una cookie emitida antes de cambiar la contraseña ya no es válida.
         if user is None or not user.active or session[1] != password_fingerprint(user.password_hash, settings.auth_secret):
             return JSONResponse(status_code=401, content={"detail": "Sesión no válida o vencida."})
-        return UserResponse(user=to_out(user))
+        return {"usuario": to_out(user)}
 
     @app.post("/recuperar")
-    def recover_password(body: PasswordRecoveryIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    def recuperar(body: RecuperarIn, background: BackgroundTasks, db: Session = Depends(get_db)):
         reset_limiter: LoginLimiter = app.state.reset_limiter
         if reset_limiter.blocked(body.email):
             return JSONResponse(status_code=429, content={"detail": TOO_MANY})
@@ -164,12 +154,12 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
         if result is not None:
             user, raw_token = result
             link = f"{settings.frontend_url}/portal/restablecer?token={quote(raw_token)}"
-            # Sent in the background: the response takes the same time whether or not the account exists.
+            # El envío va en segundo plano: la respuesta tarda lo mismo exista o no la cuenta.
             background.add_task(send_password_reset, app.state.mailer, user.email, user.name, link, settings.reset_minutes)
         return {"detail": RESET_SENT}
 
     @app.post("/restablecer")
-    def confirm_password_reset(body: PasswordResetIn, db: Session = Depends(get_db)):
+    def restablecer(body: RestablecerIn, db: Session = Depends(get_db)):
         user = reset_password(db, body.token, body.password, settings.bcrypt_rounds)
         if user is None:
             return JSONResponse(status_code=410, content={"detail": INVALID_TOKEN, "code": "invalid_token"})
@@ -177,9 +167,8 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
         return {"detail": "Contraseña actualizada."}
 
     @app.get("/salud")
-    def health(db: Session = Depends(get_db)):
+    def salud(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1"))
-        # "estado" and "bd" are the JSON keys checked by the Postman collection.
         return {"estado": "ok", "bd": "ok"}
 
     return app

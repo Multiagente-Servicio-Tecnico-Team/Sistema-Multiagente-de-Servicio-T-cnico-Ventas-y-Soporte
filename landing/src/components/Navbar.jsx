@@ -25,7 +25,7 @@ export default function Navbar() {
 
   const close = () => setOpen(false);
 
-  // With an open session, offer to go back to the matching area instead of "Iniciar sesión".
+  // Con sesión abierta se ofrece volver al área correspondiente en lugar de "Iniciar sesión".
   const account = session
     ? { to: session.role === "staff" ? "/taller" : "/portal/tickets", label: session.role === "staff" ? "Ir al panel" : "Ir a mi portal" }
     : { to: "/portal/acceso", label: "Iniciar sesión" };

@@ -23,8 +23,8 @@ function renderAt(path, element, routePath) {
   );
 }
 
-describe("password recovery", () => {
-  it("validates the email and does not call the API if it is invalid", async () => {
+describe("recuperar contraseña", () => {
+  it("valida el correo y no llama a la API si es inválido", async () => {
     const api = { mode: "api", requestPasswordReset: vi.fn() };
     const user = userEvent.setup();
     renderAt("/portal/recuperar", <Recover api={api} />, "/portal/recuperar");
@@ -36,7 +36,7 @@ describe("password recovery", () => {
     expect(api.requestPasswordReset).not.toHaveBeenCalled();
   });
 
-  it("shows the confirmation without revealing whether the email exists", async () => {
+  it("muestra la confirmación sin revelar si el correo existe", async () => {
     const api = { mode: "api", requestPasswordReset: vi.fn().mockResolvedValue({ ok: true }) };
     const user = userEvent.setup();
     renderAt("/portal/recuperar", <Recover api={api} />, "/portal/recuperar");
@@ -51,14 +51,14 @@ describe("password recovery", () => {
   });
 });
 
-describe("password reset", () => {
-  it("without a token shows the invalid link state", () => {
+describe("restablecer contraseña", () => {
+  it("sin token muestra el estado de enlace inválido", () => {
     renderAt("/portal/restablecer", <Reset api={{ mode: "api", resetPassword: vi.fn() }} />, "/portal/restablecer");
     expect(screen.getByRole("heading", { name: "Enlace no válido" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /solicitar un nuevo enlace/i })).toHaveAttribute("href", "/portal/recuperar");
   });
 
-  it("requires a strong matching password", async () => {
+  it("exige una contraseña segura y que coincida", async () => {
     const api = { mode: "api", resetPassword: vi.fn() };
     const user = userEvent.setup();
     renderAt("/portal/restablecer?token=abc", <Reset api={api} />, "/portal/restablecer");
@@ -72,7 +72,7 @@ describe("password reset", () => {
     expect(api.resetPassword).not.toHaveBeenCalled();
   });
 
-  it("sends token and password and confirms the change", async () => {
+  it("envía token y contraseña y confirma el cambio", async () => {
     const api = { mode: "api", resetPassword: vi.fn().mockResolvedValue({ ok: true }) };
     const user = userEvent.setup();
     renderAt("/portal/restablecer?token=abc123", <Reset api={api} />, "/portal/restablecer");
@@ -85,7 +85,7 @@ describe("password reset", () => {
     expect(api.resetPassword).toHaveBeenCalledWith({ token: "abc123", password: "Nueva#Clave2026" });
   });
 
-  it("offers to request a new link when the token expired", async () => {
+  it("si el token expiró ofrece pedir un enlace nuevo", async () => {
     const api = { mode: "api", resetPassword: vi.fn().mockRejectedValue(new ApiError(MESSAGES.invalidToken, { status: 410, code: "invalid_token" })) };
     const user = userEvent.setup();
     renderAt("/portal/restablecer?token=viejo", <Reset api={api} />, "/portal/restablecer");
@@ -98,8 +98,8 @@ describe("password reset", () => {
   });
 });
 
-describe("POST /restablecer contract", () => {
-  it("sends token and password and maps 410 to an invalid link", async () => {
+describe("contrato POST /restablecer", () => {
+  it("envía token y contraseña y traduce 410 a enlace inválido", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 410, json: async () => ({}) });
     const api = createAuthApi({ baseUrl: "http://api.local", fetchImpl });
 

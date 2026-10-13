@@ -1,4 +1,4 @@
-"""Password hashing (bcrypt), signed session cookie and sign-in attempt limiting."""
+"""Hash de contraseñas (bcrypt), cookie de sesión firmada y límite de intentos de acceso."""
 import base64
 import hashlib
 import hmac
@@ -18,12 +18,12 @@ def verify_password(password: str, password_hash: str) -> bool:
     try:
         return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("ascii"))
     except ValueError:
-        # Password longer than 72 bytes or a malformed hash.
+        # Contraseña de más de 72 bytes o hash con formato inválido.
         return False
 
 
 def dummy_hash(rounds: int = 12) -> str:
-    """Hash of a random password, compared in constant time when the email does not exist."""
+    """Hash de una clave aleatoria para comparar en tiempo constante cuando el correo no existe."""
     return hash_password(secrets.token_urlsafe(32), rounds)
 
 
@@ -36,7 +36,7 @@ def _unb64(data: str) -> bytes:
 
 
 def password_fingerprint(password_hash: str, secret: str) -> str:
-    """Fingerprint of the current hash: when the password changes, earlier cookies stop being valid."""
+    """Huella del hash actual: si la contraseña cambia, las cookies emitidas antes dejan de valer."""
     return hmac.new(secret.encode("utf-8"), password_hash.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
@@ -48,7 +48,7 @@ def sign_session(user_id: int, secret: str, max_age_seconds: int, fingerprint: s
 
 
 def read_session(token: str | None, secret: str, now: float | None = None) -> tuple[int, str] | None:
-    """Returns (user id, fingerprint) if the cookie is authentic and unexpired; otherwise None."""
+    """Devuelve (id de usuario, huella) si la cookie es auténtica y vigente; si no, None."""
     if not token or token.count(".") != 1:
         return None
     payload, signature = token.split(".")
@@ -65,7 +65,7 @@ def read_session(token: str | None, secret: str, now: float | None = None) -> tu
 
 
 def new_reset_token() -> tuple[str, str]:
-    """256-bit token for the link and its SHA-256 hash to store in recovery_tokens."""
+    """Token de 256 bits para el enlace y su hash SHA-256 para guardar en recovery_tokens."""
     raw = secrets.token_urlsafe(32)
     return raw, hash_reset_token(raw)
 
@@ -75,7 +75,7 @@ def hash_reset_token(raw: str) -> str:
 
 
 class LoginLimiter:
-    """Counts failed attempts per email within a time window (process memory)."""
+    """Cuenta intentos fallidos por correo dentro de una ventana de tiempo (memoria del proceso)."""
 
     def __init__(self, max_failures: int, window_seconds: int):
         self.max_failures = max_failures
