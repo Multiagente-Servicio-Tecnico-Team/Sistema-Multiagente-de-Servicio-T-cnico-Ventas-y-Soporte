@@ -8,10 +8,10 @@ import { chatApi } from "../../api/chat.js";
 import LiveChat from "./LiveChat.jsx";
 
 /*
- * Dos modos:
- * - /portal/asistente               → consulta nueva: pide equipo y falla y crea un ticket (cliente + cola del taller).
- * - /portal/asistente?ticket=TCK-…  → conversación de un ticket existente con su presupuesto (diseño de Figma).
- * Las respuestas son textos fijos de demostración; no hay modelo conectado.
+ * Two modes:
+ * - /portal/asistente               → new request: asks for device and fault and creates a ticket (customer + workshop queue).
+ * - /portal/asistente?ticket=TCK-…  → conversation of an existing ticket with its quote (Figma design).
+ * Replies are fixed demo texts; no model is connected.
  */
 
 const ticketSuggestions = [
@@ -38,7 +38,7 @@ function now() {
   return new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
 }
 
-// Conversación del diseño de Figma para el ticket con presupuesto detallado.
+// Figma design conversation for the ticket with a detailed quote.
 const figmaConversation = [
   {
     id: 1,
@@ -125,7 +125,7 @@ function Chat({ ticketId }) {
           ],
         }]
   );
-  // Consulta nueva: "device" → "issue" → "done". Ticket existente: siempre "ticket".
+  // New request: "device" → "issue" → "done". Existing ticket: always "ticket".
   const [step, setStep] = useState(existing ? "ticket" : "device");
   const [device, setDevice] = useState("");
   const [createdId, setCreatedId] = useState(null);
@@ -289,11 +289,11 @@ function Chat({ ticketId }) {
   );
 }
 
-/** Reinicia la conversación al cambiar entre consulta nueva y un ticket existente. */
+/** Restarts the conversation when switching between a new request and an existing ticket. */
 export default function Assistant({ api = chatApi }) {
   const [params] = useSearchParams();
   const ticketId = params.get("ticket");
-  // Con VITE_CHAT_URL, la consulta nueva va al patrón LangGraph con la sesión del inicio de sesión.
+  // With VITE_CHAT_URL, a new request goes to the LangGraph pattern with the sign-in session.
   if (!ticketId && api.mode === "api") return <LiveChat api={api} />;
   return <Chat key={ticketId || "nueva"} ticketId={ticketId} />;
 }

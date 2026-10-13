@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import Logo from "./Logo.jsx";
 
-// Las rutas que empiezan con "/" usan el router; los anclas y mailto siguen siendo enlaces normales.
+// Paths starting with "/" use the router; anchors and mailto stay as plain links.
 const columns = [
   { title: "Producto", links: [["Panel del taller", "/taller"], ["Agentes", "#agentes"], ["Integraciones", "#plataforma"]] },
   { title: "Recursos", links: [["Centro de ayuda", "/ayuda"], ["Seguridad", "#seguridad"], ["Estado del sistema", "/ayuda#estado"]] },

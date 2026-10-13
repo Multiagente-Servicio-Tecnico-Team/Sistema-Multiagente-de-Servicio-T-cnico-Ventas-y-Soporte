@@ -1,15 +1,15 @@
-"""Sesión reutilizable: cualquier API del equipo identifica al usuario con la cookie del login.
+"""Reusable session: any team API identifies the user with the sign-in cookie.
 
-Uso en la API de un patrón LangGraph:
+Usage in the API of a LangGraph pattern:
 
     guard = SessionGuard.from_env()
     guard.install(app)
 
     @app.post("/api/chat")
     def chat(body: ChatIn, customer: SessionCustomer = Depends(guard.require_customer)):
-        ...  # customer.id va a tickets.customer_id
+        ...  # customer.id goes to tickets.customer_id
 
-La identidad sale solo de la cookie firmada; nunca del cuerpo de la petición.
+Identity comes only from the signed cookie, never from the request body.
 """
 import os
 from dataclasses import dataclass
@@ -37,15 +37,15 @@ class SessionError(Exception):
 @dataclass(frozen=True)
 class SessionCustomer:
     id: int
-    nombre: str
-    apellido: str | None
+    first_name: str
+    last_name: str | None
     email: str
-    rol: str
+    role: str
 
 
 def _to_customer(user: User) -> SessionCustomer:
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    return SessionCustomer(id=user.id, nombre=user.name, apellido=user.last_name, email=user.email, rol=role)
+    return SessionCustomer(id=user.id, first_name=user.name, last_name=user.last_name, email=user.email, role=role)
 
 
 class SessionGuard:
@@ -55,20 +55,20 @@ class SessionGuard:
 
     @classmethod
     def from_env(cls, session_factory: sessionmaker | None = None) -> "SessionGuard":
-        """Para otras APIs: exige el mismo AUTH_SECRET y DATABASE_URL que la API de cuentas."""
+        """For other APIs: requires the same AUTH_SECRET and DATABASE_URL as the accounts API."""
         load_dotenv()
         if not os.getenv("AUTH_SECRET"):
-            raise RuntimeError("AUTH_SECRET debe ser el mismo que usa la API de cuentas.")
+            raise RuntimeError("AUTH_SECRET must match the one used by the accounts API.")
         settings = Settings.from_env()
         if session_factory is None:
             if not settings.database_url:
-                raise RuntimeError("DATABASE_URL no está configurada.")
+                raise RuntimeError("DATABASE_URL is not configured.")
             engine = create_engine(settings.database_url, pool_pre_ping=True)
             session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
         return cls(settings, session_factory)
 
     def resolve(self, request: Request) -> User | None:
-        """Usuario activo de la cookie, o None si falta, es inválida, venció o la contraseña cambió."""
+        """Active user from the cookie, or None if missing, invalid, expired or the password changed."""
         session = read_session(request.cookies.get(self.settings.cookie_name), self.settings.auth_secret)
         if not session:
             return None
@@ -89,7 +89,7 @@ class SessionGuard:
 
     def require_customer(self, request: Request) -> SessionCustomer:
         customer = self.require_user(request)
-        if customer.rol != Role.CUSTOMER.value:
+        if customer.role != Role.CUSTOMER.value:
             raise SessionError(403, CUSTOMER_ONLY, "customer_only")
         return customer
 

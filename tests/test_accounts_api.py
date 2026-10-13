@@ -1,4 +1,4 @@
-"""Pruebas de la API de cuentas con SQLite en memoria; no requieren PostgreSQL."""
+"""Accounts API tests with in-memory SQLite; PostgreSQL is not required."""
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
@@ -38,7 +38,7 @@ def add_user(factory, email, role=Role.CUSTOMER, active=True):
 
 # ---------- POST /registro ----------
 
-def test_registro_crea_cliente_con_hash_bcrypt(env):
+def test_register_creates_customer_with_bcrypt_hash(env):
     client, factory = env
     res = client.post("/registro", json=VALID)
 
@@ -54,20 +54,20 @@ def test_registro_crea_cliente_con_hash_bcrypt(env):
     assert bcrypt.checkpw(PASSWORD.encode(), user.password_hash.encode())
 
 
-def test_registro_acepta_apellido_separado(env):
+def test_register_accepts_separate_last_name(env):
     client, _ = env
     res = client.post("/registro", json={**VALID, "nombre": "María José", "apellido": "Pérez Díaz"})
     assert res.json()["usuario"]["nombre"] == "María José"
     assert res.json()["usuario"]["apellido"] == "Pérez Díaz"
 
 
-def test_registro_ignora_rol_enviado_por_el_cliente(env):
+def test_register_ignores_role_sent_by_client(env):
     client, factory = env
     client.post("/registro", json={**VALID, "rol": "ADMIN", "role": "ADMIN"})
     assert rows(factory)[0].role == Role.CUSTOMER
 
 
-def test_registro_rechaza_correo_duplicado_sin_crear_filas(env):
+def test_register_rejects_duplicate_email_without_creating_rows(env):
     client, factory = env
     assert client.post("/registro", json=VALID).status_code == 201
     res = client.post("/registro", json={**VALID, "email": "MARTIN.GOMEZ@gmail.com"})
@@ -89,7 +89,7 @@ def test_registro_rechaza_correo_duplicado_sin_crear_filas(env):
         ({"nombre": "Al"}, "nombre"),
     ],
 )
-def test_registro_valida_datos_sin_devolver_la_contrasena(env, patch, field):
+def test_register_validates_data_without_echoing_password(env, patch, field):
     client, factory = env
     res = client.post("/registro", json={**VALID, **patch})
 
@@ -99,7 +99,7 @@ def test_registro_valida_datos_sin_devolver_la_contrasena(env, patch, field):
     assert rows(factory) == []
 
 
-def test_registro_sin_campos_obligatorios(env):
+def test_register_without_required_fields(env):
     client, _ = env
     res = client.post("/registro", json={"email": "a@b.pe"})
     assert res.status_code == 422
@@ -108,7 +108,7 @@ def test_registro_sin_campos_obligatorios(env):
 
 # ---------- POST /login, /me, /logout ----------
 
-def test_login_correcto_abre_sesion_con_cookie_segura(env):
+def test_login_success_opens_session_with_secure_cookie(env):
     client, _ = env
     client.post("/registro", json=VALID)
     res = client.post("/login", json={"email": "  MARTIN.gomez@gmail.com ", "password": PASSWORD})
@@ -121,7 +121,7 @@ def test_login_correcto_abre_sesion_con_cookie_segura(env):
     assert client.get("/me").json()["usuario"]["nombre"] == "Martín"
 
 
-def test_login_fallido_usa_el_mismo_mensaje(env):
+def test_failed_login_uses_same_message(env):
     client, _ = env
     client.post("/registro", json=VALID)
     wrong = client.post("/login", json={"email": VALID["email"], "password": "Otra#Clave2026"})
@@ -132,26 +132,26 @@ def test_login_fallido_usa_el_mismo_mensaje(env):
     assert "set-cookie" not in wrong.headers
 
 
-def test_cuenta_inactiva_no_inicia_sesion(env):
+def test_inactive_account_cannot_sign_in(env):
     client, factory = env
     add_user(factory, "inactiva@techfix.ai", active=False)
     assert client.post("/login", json={"email": "inactiva@techfix.ai", "password": PASSWORD}).status_code == 401
 
 
-def test_login_devuelve_rol_del_personal(env):
+def test_login_returns_staff_role(env):
     client, factory = env
     add_user(factory, "tecnico@taller.com", role=Role.TECHNICIAN)
     res = client.post("/login", json={"email": "tecnico@taller.com", "password": PASSWORD})
     assert res.json()["usuario"]["rol"] == "TECHNICIAN"
 
 
-def test_contrasena_mayor_a_72_bytes_no_rompe_el_login(env):
+def test_password_over_72_bytes_does_not_break_login(env):
     client, _ = env
     client.post("/registro", json=VALID)
     assert client.post("/login", json={"email": VALID["email"], "password": "A#1" + "ñ" * 200}).status_code == 401
 
 
-def test_bloquea_tras_cinco_intentos_fallidos(env):
+def test_locks_after_five_failed_attempts(env):
     client, _ = env
     client.post("/registro", json=VALID)
     for _ in range(5):
@@ -160,14 +160,14 @@ def test_bloquea_tras_cinco_intentos_fallidos(env):
     assert blocked.status_code == 429
 
 
-def test_me_sin_cookie_o_alterada_responde_401(env):
+def test_me_without_or_tampered_cookie_returns_401(env):
     client, _ = env
     assert client.get("/me").status_code == 401
     client.cookies.set("techfix_session", sign_session(1, "otro-secreto" * 4, 3600))
     assert client.get("/me").status_code == 401
 
 
-def test_logout_borra_la_sesion(env):
+def test_logout_clears_session(env):
     client, _ = env
     client.post("/registro", json=VALID)
     client.post("/login", json={"email": VALID["email"], "password": PASSWORD})
@@ -175,9 +175,9 @@ def test_logout_borra_la_sesion(env):
     assert client.get("/me").status_code == 401
 
 
-# ---------- CORS y salud ----------
+# ---------- CORS and health ----------
 
-def test_cors_solo_para_el_frontend_configurado(env):
+def test_cors_only_for_configured_frontend(env):
     client, _ = env
     headers = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}
     ok = client.options("/login", headers={**headers, "Origin": "http://localhost:5173"})
@@ -188,18 +188,18 @@ def test_cors_solo_para_el_frontend_configurado(env):
     assert "access-control-allow-origin" not in other.headers
 
 
-def test_salud(env):
+def test_health(env):
     client, _ = env
     assert client.get("/salud").json() == {"estado": "ok", "bd": "ok"}
 
 
-def test_registro_concurrente_respeta_unicidad(env):
-    """Si dos registros pasan la verificación previa, la restricción UNIQUE devuelve 409."""
+def test_concurrent_register_respects_uniqueness(env):
+    """If two sign-ups pass the first check, the UNIQUE constraint returns 409."""
     _, factory = env
-    from app.accounts.schemas import RegistroIn
+    from app.accounts.schemas import RegisterIn
     from app.accounts.service import EmailAlreadyRegistered, register_user
 
-    data = RegistroIn(**VALID)
+    data = RegisterIn(**VALID)
     with factory() as db:
         register_user(db, data, 4)
     with factory() as db, pytest.MonkeyPatch.context() as mp:

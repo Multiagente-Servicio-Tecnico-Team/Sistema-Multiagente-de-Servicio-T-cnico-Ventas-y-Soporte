@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Activity, LifeBuoy, Mail, MessageSquareText, Scale } from "lucide-react";
 
-/** Pantalla creada: los diseños enlazan "Soporte Técnico" y "Preguntas Frecuentes" pero no los incluían. */
+/** Added screen: the designs link to "Soporte Técnico" and "Preguntas Frecuentes" but did not include them. */
 const faqs = [
   {
     q: "¿Cómo consulto el estado de mi reparación?",
