@@ -10,10 +10,11 @@ from app.main import create_app, PATTERN_NAMES
 from app.database.conversation_owners import ConversationNotFound, ConversationConflict, ConversationStorageError
 
 
-def client_for(repo, graph):
+def client_for(repo, graph, locks=None):
     return TestClient(create_app(session_guard=Guard(),
         graph_factories={name: lambda: graph for name in PATTERN_NAMES},
-        conversation_owners_repository=repo, trace_context_factory=nullcontext))
+        conversation_owners_repository=repo, trace_context_factory=nullcontext,
+        conversation_locks=locks or type("TestLocks", (), {"hold": lambda self, thread: nullcontext()})()))
 
 
 def test_registration_then_recovery_in_new_app_uses_durable_thread():
@@ -50,3 +51,17 @@ def test_registration_failure_no_graph_execution():
     with client_for(repo, graph) as client:
         assert client.post("/api/chat", json={"pattern": "decentralized", "message": "Hola"}).status_code == 503
     graph.invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("kind,status", [("busy",409), ("storage",503)])
+def test_coordination_rejection_does_not_invoke_graph(kind, status):
+    from app.database.conversation_locks import ConversationBusy, ConversationLockStorageError
+    repo, graph, locks = MagicMock(), MagicMock(), MagicMock()
+    repo.authorize.return_value = {"thread_id": "stored-thread"}
+    error = ConversationBusy() if kind == "busy" else ConversationLockStorageError()
+    locks.hold.return_value.__enter__.side_effect = error
+    with client_for(repo, graph, locks) as client:
+        response = client.post("/api/chat", json={"pattern": "decentralized", "message": "Hola", "conversation_id": "existing"})
+        assert response.status_code == status
+    graph.invoke.assert_not_called()
+    locks.hold.assert_called_once_with("stored-thread")

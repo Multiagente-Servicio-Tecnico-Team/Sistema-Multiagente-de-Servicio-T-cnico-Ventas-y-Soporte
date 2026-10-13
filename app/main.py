@@ -31,6 +31,7 @@ from app.database.conversation_owners import (
     ConversationOwnersRepository, ConversationNotFound, ConversationConflict,
     ConversationStorageError,
 )
+from app.database.conversation_locks import ConversationLocks, ConversationBusy, ConversationLockStorageError
 
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,7 @@ def create_app(
     trace_context_factory: Callable[[], AbstractContextManager[None]] | None = None,
     checkpoint_resources_factory: Callable[[], Any] | None = None,
     conversation_owners_repository: Any | None = None,
+    conversation_locks: Any | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application):
@@ -232,6 +234,9 @@ def create_app(
                     application.state.decentralized_graph = _build_decentralized_graph(resources.saver)
                     application.state.checkpoint_resources = resources
                     application.state.conversation_owners = ConversationOwnersRepository(resources.pool)
+                    if resources.pool.max_size < 2:
+                        raise RuntimeError("Pool requiere capacidad para coordinación y saver")
+                    application.state.conversation_locks = ConversationLocks(resources.pool)
                 except Exception:
                     logger.error("Decentralized checkpoint initialization failed")
                     if resources is not None:
@@ -246,6 +251,7 @@ def create_app(
             application.state.decentralized_graph = None
             application.state.checkpoint_resources = None
             application.state.conversation_owners = None
+            application.state.conversation_locks = None
             graph_cache.pop("decentralized", None)
             if resources is not None:
                 try:
@@ -257,6 +263,7 @@ def create_app(
     app.state.decentralized_graph = None
     app.state.checkpoint_resources = None
     app.state.conversation_owners = conversation_owners_repository
+    app.state.conversation_locks = conversation_locks
     account_settings = (
         session_guard.settings
         if session_guard is not None
@@ -457,6 +464,23 @@ def create_app(
             )
         message = _message_for_action(body.action, body.message)
 
+        # Authorization above precedes lock acquisition. Independent threads use
+        # independent advisory keys; only the decentralized branch uses PostgreSQL.
+        coordination = nullcontext()
+        if body.pattern == "decentralized":
+            locks = conversation_locks or app.state.conversation_locks
+            if locks is None:
+                raise HTTPException(status_code=503, detail="La coordinación del asistente no está disponible.")
+            coordination = locks.hold(thread_id)
+        try:
+            with coordination:
+                return run_conversation(body, customer, conversation_id, thread_id, conversation, message)
+        except ConversationBusy:
+            return JSONResponse(status_code=409, content={"detail": "La conversación está procesando otro mensaje.", "code": "conversation_busy"})
+        except ConversationLockStorageError:
+            raise HTTPException(status_code=503, detail="La coordinación del asistente no está disponible.") from None
+
+    def run_conversation(body, customer, conversation_id, thread_id, conversation, message):
         with conversation["lock"]:
             try:
                 result = invoke_pattern(

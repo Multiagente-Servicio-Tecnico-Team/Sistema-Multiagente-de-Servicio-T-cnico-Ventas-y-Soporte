@@ -20,7 +20,9 @@ class Guard:
 
 
 def resources():
-    return SimpleNamespace(pool=MagicMock(), saver=MagicMock(), close=MagicMock())
+    pool = MagicMock()
+    pool.max_size = 5
+    return SimpleNamespace(pool=pool, saver=MagicMock(), close=MagicMock())
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +30,7 @@ def ownership_mock(monkeypatch):
     repository = MagicMock()
     repository.register.side_effect = lambda **kw: {"thread_id": kw["thread_id"]}
     monkeypatch.setattr(main, "ConversationOwnersRepository", lambda pool: repository)
+    monkeypatch.setattr(main, "ConversationLocks", lambda pool: SimpleNamespace(hold=lambda thread: nullcontext()))
 
 
 def test_lifespan_reuses_saver_and_closes(monkeypatch):

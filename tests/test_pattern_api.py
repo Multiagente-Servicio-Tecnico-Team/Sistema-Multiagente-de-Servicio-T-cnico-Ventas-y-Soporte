@@ -106,6 +106,7 @@ def pattern_client():
         settings_factory=lambda: settings,
         trace_context_factory=nullcontext,
         conversation_owners_repository=TestOwners(),
+        conversation_locks=type("TestLocks", (), {"hold": lambda self, thread: nullcontext()})(),
     )
     client = TestClient(app)
     client.cookies.set("techfix_session", accounts.cookies.get("techfix_session"))
