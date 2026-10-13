@@ -13,6 +13,9 @@ def after_supervisor(state: ServiceState) -> str:
         "warranty_status": "operations_team_supervisor",
         "warranty_claim": "operations_team_supervisor",
         "logistics": "operations_team_supervisor",
+        "inventory_selection": "warehouse_agent",
+        "diagnosis_only": "warehouse_agent",
+        "awaiting_inventory_selection": END,
         "awaiting_confirmation": END,
         "declined": END,
         "clarification": END,
@@ -25,6 +28,15 @@ def after_operations_supervisor(state: ServiceState) -> str:
         return "warranty_agent"
     if state.get("route") == "logistics":
         return "logistics_agent"
+    return END
+
+
+def after_logistics(state: ServiceState) -> str:
+    if (
+        state.get("outcome") == "logistics_registered"
+        and state.get("request_type") in {"SALE", "PC_BUILD"}
+    ):
+        return "order_completion_agent"
     return END
 
 

@@ -74,20 +74,40 @@ def quote_suggestion_response(state: ServiceState) -> dict[str, Any]:
         lines = ["Revisé los artículos solicitados contra el inventario actual:"]
     elif state["request_type"] == "PC_BUILD":
         lines = [
-            "Los componentes y precios provienen del catálogo actual. La "
-            "compatibilidad completa del armado no está verificada; no confirmes "
-            "la compra hasta que un especialista valide la configuración."
+            (
+                f"Armado recomendado: {state.get('build_profile_id', '').replace('-', ' ')}. "
+                "Los productos, stock y precios se consultaron en el catálogo "
+                "actual. La compatibilidad integral requiere validar: "
+                f"{state.get('build_compatibility_notes', 'revisión final del fabricante')}."
+            )
         ]
     elif state["labor_task_type"] == "diagnosis":
-        lines = [
+        diagnosis_context = (
             "Con la información disponible todavía no es posible identificar "
-            f"la causa exacta. El ticket {state['ticket_code']} ya está registrado "
-            "para que el técnico revise el equipo y diagnostique la falla. "
-            "El presupuesto sería únicamente "
-            f"de mano de obra por S/ {quote['labor_cost']:.2f}; los repuestos "
-            "quedan en S/ 0.00 porque todavía no se ha determinado cuáles se "
-            "necesitan."
-        ]
+            "la causa exacta. "
+        )
+        if quote["parts"]:
+            candidates = ", ".join(
+                    part["name"]
+                for part in quote["parts"]
+            )
+            diagnosis_context += (
+                f"Como opción provisional, te recomiendo evaluar {candidates}; "
+                "consulté su disponibilidad y precio en el catálogo. El técnico "
+                "debe confirmar que el almacenamiento sea la causa y verificar "
+                "la compatibilidad con el modelo antes de instalarlo. "
+            )
+        diagnosis_context += (
+            f"El ticket {state['ticket_code']} ya está registrado para que el "
+            "técnico revise el equipo y diagnostique la falla."
+        )
+        if not quote["parts"]:
+            diagnosis_context += (
+                f" El presupuesto sería únicamente de mano de obra por "
+                f"S/ {quote['labor_cost']:.2f}; los repuestos quedan en "
+                "S/ 0.00 porque todavía no se ha determinado cuáles se necesitan."
+            )
+        lines = [diagnosis_context]
     else:
         lines = [
             (
@@ -154,6 +174,20 @@ def quote_suggestion_response(state: ServiceState) -> dict[str, Any]:
             ),
         ]
     )
+    budget = state.get("budget_max")
+    if (
+        state.get("request_type") == "PC_BUILD"
+        and budget is not None
+        and quote["total_amount"] > Decimal(str(budget))
+    ):
+        lines.insert(
+            1,
+            (
+                f"Nota: el total de S/ {quote['total_amount']:.2f} supera el "
+                f"presupuesto indicado de S/ {Decimal(str(budget)):.2f}. "
+                "Solo continuaré si confirmas explícitamente este nuevo importe."
+            ),
+        )
     return {
         "route": "service",
         "outcome": "awaiting_confirmation",

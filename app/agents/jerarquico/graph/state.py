@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import AnyMessage
@@ -22,6 +23,9 @@ class ServiceState(TypedDict, total=False):
         "warranty_status",
         "warranty_claim",
         "logistics",
+        "inventory_selection",
+        "diagnosis_only",
+        "awaiting_inventory_selection",
     ]
     team: Literal["commercial", "technical", "operations"]
     request_type: str
@@ -33,11 +37,19 @@ class ServiceState(TypedDict, total=False):
     provisional_diagnosis: str
     rag_context: str
     required_parts: list[dict[str, Any]]
+    pending_commercial_requests: list[dict[str, Any]]
+    budget_max: Decimal | None
+    intended_use: str
+    build_profile_id: str
+    build_compatibility_notes: str
+    awaiting_build_budget: bool
+    inventory_selection_replaces_category: str
     manual_selection_complete: bool
     manual_selection_error: str
     matched_parts: list[dict[str, Any]]
     inventory_substitutions: list[dict[str, Any]]
     inventory_options_message: str
+    inventory_options: list[dict[str, Any]]
     rag_documents: list[dict[str, Any]]
     faq_context: str
     warranty_code: str
@@ -51,6 +63,7 @@ class ServiceState(TypedDict, total=False):
     payment_code: str
     ticket_status: str
     awaiting_quote_confirmation: bool
+    awaiting_inventory_selection: bool
     quote_changed: bool
     ticket_id: int | None
     ticket_code: str

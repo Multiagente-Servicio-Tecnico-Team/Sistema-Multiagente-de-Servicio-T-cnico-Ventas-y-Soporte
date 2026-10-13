@@ -24,6 +24,7 @@ AGENT_NAMES = {
     "billing_agent",
     "logistics_agent",
     "warranty_agent",
+    "order_completion_agent",
     "persist_diagnosis",
     "quote_suggestion_response",
 }
@@ -32,6 +33,7 @@ TOOL_NAMES = {
     "warranty_lookup",
     "accepted_quote_write",
     "warranty_claim_write",
+    "warranty_write",
     "logistics_record_write",
     "ticket_quote_write",
     "intake_ticket_write",

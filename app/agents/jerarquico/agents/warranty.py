@@ -131,3 +131,57 @@ def make_warranty_agent(repository: ServiceRepository):
         }
 
     return warranty_agent
+
+
+def make_order_completion_agent(repository: ServiceRepository):
+    def order_completion_agent(state: ServiceState) -> dict[str, Any]:
+        parts = state.get("matched_parts", [])
+        item_name = (
+            "Armado de PC"
+            if state.get("request_type") == "PC_BUILD"
+            else "Venta de productos"
+        )
+        if parts:
+            item_name += ": " + ", ".join(
+                str(part["name"]) for part in parts
+            )
+        warranty = traced_tool(
+            state,
+            "warranty_write",
+            lambda: repository.create_order_warranty(
+                ticket_id=state["ticket_id"],
+                quote_id=state["quote_id"],
+                customer_id=state["customer_id"],
+                warranty_code=f"WAR-{uuid4().hex[:12].upper()}",
+                item_or_service_name=item_name,
+                warranty_months=3,
+                request_type=state["request_type"],
+            ),
+        )
+        return {
+            "warranty_id": int(warranty["id"]),
+            "warranty_code": warranty["warranty_code"],
+            "warranty_status": "ACTIVE",
+            "outcome": "order_completed",
+            "messages": [
+                AIMessage(
+                    content=(
+                        f"Registré la garantía de 3 meses con el código "
+                        f"{warranty['warranty_code']} para el ticket "
+                        f"{state['ticket_code']}. Tu pago continúa pendiente y la "
+                        "logística está pendiente de recepción; esto no confirma "
+                        "reserva ni entrega."
+                        + (
+                            " El equipo será revisado por el técnico cuando ingrese "
+                            "físicamente al taller."
+                            if state.get("request_type") == "PC_BUILD"
+                            else " Te avisaremos cuando el pedido esté listo para "
+                            "retiro o despacho."
+                        )
+                        + " Gracias por tu preferencia. ¡Que tengas un buen día!"
+                    )
+                )
+            ],
+        }
+
+    return order_completion_agent

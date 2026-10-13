@@ -794,6 +794,99 @@ class ServiceRepository:
                 raise LookupError("No se pudo registrar la modalidad logística.")
         return int(record_id)
 
+    def create_order_warranty(
+        self,
+        *,
+        ticket_id: int,
+        quote_id: int,
+        customer_id: int,
+        warranty_code: str,
+        item_or_service_name: str,
+        warranty_months: int = 3,
+        request_type: str = "PC_BUILD",
+    ) -> dict[str, Any]:
+        if warranty_months != 3:
+            raise ValueError("La garantía del pedido debe tener una vigencia de 3 meses.")
+        if request_type not in {"SALE", "PC_BUILD"}:
+            raise ValueError("La garantía solo aplica a una venta o armado aceptado.")
+        with self._session_factory() as session, session.begin():
+            quote = session.execute(
+                text(
+                    """
+                    SELECT q.id, q.status::text AS status
+                    FROM quotes q
+                    JOIN tickets t ON t.id = q.ticket_id
+                    WHERE q.id = :quote_id
+                      AND q.ticket_id = :ticket_id
+                      AND t.customer_id = :customer_id
+                      AND t.request_type = CAST(:request_type AS request_type_enum)
+                    FOR UPDATE OF q
+                    """
+                ),
+                {
+                    "quote_id": quote_id,
+                    "ticket_id": ticket_id,
+                    "customer_id": customer_id,
+                    "request_type": request_type,
+                },
+            ).mappings().first()
+            if quote is None or quote["status"] != "ACCEPTED":
+                raise LookupError(
+                    "La garantía requiere una cotización aceptada "
+                    "del cliente autenticado."
+                )
+            existing = session.execute(
+                text(
+                    """
+                    SELECT id, warranty_code
+                    FROM warranties
+                    WHERE ticket_id = :ticket_id AND quote_id = :quote_id
+                      AND customer_id = :customer_id
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "ticket_id": ticket_id,
+                    "quote_id": quote_id,
+                    "customer_id": customer_id,
+                },
+            ).mappings().first()
+            if existing is not None:
+                return dict(existing)
+            created = session.execute(
+                text(
+                    """
+                    INSERT INTO warranties (
+                        ticket_id, quote_id, customer_id, warranty_code,
+                        item_or_service_name, warranty_months, start_date, end_date,
+                        status, terms_and_conditions
+                    )
+                    VALUES (
+                        :ticket_id, :quote_id, :customer_id, :warranty_code,
+                        :item_or_service_name, 3, CURRENT_DATE,
+                        (CURRENT_DATE + make_interval(months => 3))::date,
+                        CAST('ACTIVE' AS warranty_status_enum),
+                        :terms_and_conditions
+                    )
+                    RETURNING id, warranty_code
+                    """
+                ),
+                {
+                    "ticket_id": ticket_id,
+                    "quote_id": quote_id,
+                    "customer_id": customer_id,
+                    "warranty_code": warranty_code,
+                    "item_or_service_name": item_or_service_name[:200],
+                    "terms_and_conditions": (
+                        "Garantía de 3 meses asociada a los productos o servicio "
+                        "incluidos en la cotización aceptada. El pedido sigue "
+                        "pendiente de pago y logística; este registro no confirma "
+                        "reserva, recepción, ensamble ni entrega."
+                    ),
+                },
+            ).mappings().one()
+            return dict(created)
+
     def create_ticket(
         self,
         *,
@@ -899,6 +992,84 @@ class ServiceRepository:
             ).mappings()
             return [dict(row) for row in rows]
 
+    def find_catalog_items(self, search_term: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        if not 1 <= limit <= 40:
+            raise ValueError("El límite de búsqueda debe estar entre 1 y 40.")
+        term = search_term.strip()
+        if not term:
+            return []
+        normalized = unicodedata.normalize("NFKD", term.casefold())
+        normalized = "".join(
+            character for character in normalized if not unicodedata.combining(character)
+        )
+        tokens = list(dict.fromkeys(re.findall(r"[a-z0-9]+", normalized)))
+        stopwords = {
+            "busco", "comprar", "compra", "quiero", "necesito", "una", "un",
+            "para", "con", "de", "del", "por", "favor", "producto", "articulo",
+            "articulos", "opciones", "opcion", "pc", "computadora",
+        }
+        tokens = [token for token in tokens if token not in stopwords]
+        if not tokens:
+            return []
+
+        conditions: list[str] = []
+        parameters: dict[str, Any] = {"limit": limit}
+        family = tokens[0]
+        if family == "ram":
+            conditions.append("category ILIKE 'RAM%'")
+            if any(token in tokens for token in ("laptop", "notebook", "sodimm")):
+                conditions.append("category ILIKE '%Laptop%'")
+            elif "desktop" in tokens:
+                conditions.append("category ILIKE '%Desktop%'")
+            tokens = [token for token in tokens if token not in {"ram", "desktop", "laptop", "notebook", "sodimm"}]
+        elif family in {"ssd", "disco", "almacenamiento"}:
+            conditions.append("category ILIKE '%Almacenamiento%'")
+            tokens = [token for token in tokens if token not in {"ssd", "disco", "almacenamiento"}]
+        elif family in {"procesador", "cpu"}:
+            conditions.append("category ILIKE '%Procesador%'")
+            tokens = [token for token in tokens if token not in {"procesador", "cpu"}]
+        elif family in {"gpu", "video", "grafica", "tarjeta"}:
+            conditions.append("category ILIKE '%Video%'")
+            tokens = [token for token in tokens if token not in {"gpu", "video", "grafica", "tarjeta"}]
+        for index, token in enumerate(tokens):
+            key = f"token_{index}"
+            conditions.append(
+                "("
+                "code ILIKE :" + key + " OR name ILIKE :" + key
+                + " OR COALESCE(category, '') ILIKE :" + key
+                + " OR COALESCE(description, '') ILIKE :" + key
+                + ")"
+            )
+            parameters[key] = f"%{token}%"
+        where = " AND ".join(conditions) if conditions else "TRUE"
+        query = text(
+            f"""
+            SELECT id, code, name, category, description, unit_price, current_stock
+            FROM spare_parts
+            WHERE active IS TRUE
+              AND current_stock > 0
+              AND unit_price > 0
+              AND {where}
+            ORDER BY current_stock DESC, name
+            LIMIT :limit
+            """
+        )
+        with self._session_factory() as session:
+            rows = session.execute(query, parameters).mappings()
+            return [dict(row) for row in rows]
+
+    def find_spare_part_by_code(self, code: str) -> dict[str, Any] | None:
+        query = text(
+            """
+            SELECT id, code, name, category, description, unit_price, current_stock
+            FROM spare_parts
+            WHERE active IS TRUE AND LOWER(code) = LOWER(:code)
+            """
+        )
+        with self._session_factory() as session:
+            row = session.execute(query, {"code": code.strip()}).mappings().first()
+        return dict(row) if row else None
+
     def find_spare_part_alternatives(self, search_term: str) -> list[dict[str, Any]]:
         term = search_term.strip()
         category = re.split(r"[_\s-]+", term, maxsplit=1)[0].strip()
@@ -907,15 +1078,87 @@ class ServiceRepository:
             .replace("%", "!%")
             .replace("_", "!_")
         )
+        family_filters = {
+            "RAM": """
+                AND (
+                    code ILIKE 'RAM%'
+                    OR category ILIKE 'RAM%'
+                    OR name ILIKE 'RAM %'
+                    OR name ILIKE 'Memoria RAM%'
+                )
+            """,
+            "SSD": """
+                AND (
+                    code ILIKE 'SSD%'
+                    OR (
+                        category ILIKE '%Almacenamiento%'
+                        AND name ILIKE '%SSD%'
+                    )
+                )
+            """,
+            "FUENTE": """
+                AND (
+                    code ILIKE 'PSU%'
+                    OR category ILIKE '%Fuente de Poder%'
+                    OR name ILIKE 'Fuente%'
+                )
+            """,
+            "PASTA": """
+                AND (
+                    code ILIKE 'PASTE%'
+                    OR code ILIKE '%THERM%'
+                    OR (
+                        category ILIKE '%Insumos%'
+                        AND (
+                            name ILIKE '%térmica%'
+                            OR name ILIKE '%thermal%'
+                        )
+                    )
+                )
+            """,
+            "VENTILADOR": """
+                AND (
+                    code ILIKE 'FAN%'
+                    OR code ILIKE 'COOL%'
+                    OR name ILIKE 'Ventilador%'
+                )
+            """,
+            "REP": """
+                AND (
+                    code ILIKE 'REP-BAT%'
+                    OR category ILIKE '%Batería Laptop%'
+                    OR (
+                        name ILIKE '%batería%'
+                        AND name NOT ILIKE '%RTC%'
+                        AND name NOT ILIKE '%CMOS%'
+                    )
+                )
+            """,
+            "PILA": """
+                AND (
+                    code ILIKE '%CR2032%'
+                    OR name ILIKE '%CR2032%'
+                )
+            """,
+            "SERVICIO": """
+                AND (
+                    category ILIKE '%Mantenimiento%'
+                    OR name ILIKE 'Servicio%'
+                )
+            """,
+        }
+        family_filter = family_filters.get(category.upper(), "")
         query = text(
-            """
-            SELECT id, code, name, unit_price, current_stock
+            f"""
+            SELECT id, code, name, category, unit_price, current_stock
             FROM spare_parts
             WHERE active IS TRUE
               AND (
                     code ILIKE :pattern ESCAPE '!'
                     OR name ILIKE :pattern ESCAPE '!'
+                    OR category ILIKE :pattern ESCAPE '!'
               )
+              {family_filter}
             ORDER BY
                 CASE WHEN current_stock > 0 THEN 0 ELSE 1 END,
                 name

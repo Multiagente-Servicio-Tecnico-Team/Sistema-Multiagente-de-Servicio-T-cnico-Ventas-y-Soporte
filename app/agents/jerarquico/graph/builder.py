@@ -12,7 +12,10 @@ from app.agents.jerarquico.agents.faq import MarkdownFaqRetriever, make_faq_agen
 from app.agents.jerarquico.agents.logistics import make_logistics_agent
 from app.agents.jerarquico.agents.procurement import purchasing_agent
 from app.agents.jerarquico.agents.teams import make_team_supervisor
-from app.agents.jerarquico.agents.warranty import make_warranty_agent
+from app.agents.jerarquico.agents.warranty import (
+    make_order_completion_agent,
+    make_warranty_agent,
+)
 from app.agents.jerarquico.persistence import make_persist_diagnosis
 from app.agents.jerarquico.retriever import MarkdownKnowledgeRetriever
 from app.agents.jerarquico.sales import make_sales_agent, quote_suggestion_response
@@ -23,6 +26,7 @@ from app.agents.jerarquico.warehouse import make_warehouse_agent
 from app.database.repository import ServiceRepository
 from app.agents.jerarquico.graph.routing import (
     after_inventory,
+    after_logistics,
     after_knowledge_retrieval,
     after_operations_supervisor,
     after_sales,
@@ -90,6 +94,13 @@ def build_multiagent_graph(
         traced_node("warranty_agent", make_warranty_agent(repository)),
     )
     graph.add_node(
+        "order_completion_agent",
+        traced_node(
+            "order_completion_agent",
+            make_order_completion_agent(repository),
+        ),
+    )
+    graph.add_node(
         "logistics_agent",
         traced_node("logistics_agent", make_logistics_agent(llm, repository)),
     )
@@ -124,7 +135,13 @@ def build_multiagent_graph(
     )
     graph.add_node(
         "warehouse_agent",
-        traced_node("warehouse_agent", make_warehouse_agent(repository)),
+        traced_node(
+            "warehouse_agent",
+            make_warehouse_agent(
+                repository,
+                pc_build_labor_cost=settings.labor_price_for("pc_build"),
+            ),
+        ),
     )
     graph.add_node(
         "sales_agent",
@@ -175,7 +192,15 @@ def build_multiagent_graph(
     )
     graph.add_edge("faq_agent", END)
     graph.add_edge("warranty_agent", END)
-    graph.add_edge("logistics_agent", END)
+    graph.add_conditional_edges(
+        "logistics_agent",
+        after_logistics,
+        {
+            "order_completion_agent": "order_completion_agent",
+            END: END,
+        },
+    )
+    graph.add_edge("order_completion_agent", END)
     graph.add_edge("billing_agent", END)
     graph.add_edge("purchasing_agent", END)
     graph.add_conditional_edges(
