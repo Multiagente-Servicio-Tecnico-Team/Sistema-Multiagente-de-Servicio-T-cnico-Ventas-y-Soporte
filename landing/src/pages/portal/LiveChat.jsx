@@ -29,7 +29,7 @@ function QuoteCard({ quote, busy, onAction }) {
       <div className="quote__head">
         <span className="icon-tile icon-tile--solid icon-tile--sm"><ReceiptText size={18} aria-hidden="true" /></span>
         <div>
-          <strong>Presupuesto de servicio técnico</strong>
+          <strong>Cotización</strong>
           <p className="mono-small">Calculado por el agente de ventas</p>
         </div>
       </div>
@@ -55,7 +55,7 @@ function QuoteCard({ quote, busy, onAction }) {
           </div>
         ) : (
           <p className={`ok-text${quote.status === "rejected" ? " muted" : ""}`}>
-            {{ saved: "Ticket y presupuesto guardados · pendiente de aceptación", confirmed: "Presupuesto aceptado · reparación autorizada", rejected: "Propuesta no guardada" }[quote.status]
+            {{ saved: "Ticket y presupuesto guardados · pendiente de aceptación", confirmed: "Cotización aceptada y registrada", rejected: "Propuesta no guardada" }[quote.status]
               || "Reemplazado por un presupuesto más reciente"}
           </p>
         )}
