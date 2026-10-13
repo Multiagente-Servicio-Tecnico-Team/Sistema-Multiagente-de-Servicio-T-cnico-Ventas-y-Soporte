@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useMemo, useReducer } from "react";
 
 /*
- * Estado de demostración en memoria. Los importes se guardan en céntimos (enteros)
- * para evitar errores de coma flotante; los valores provienen de los diseños de Figma.
+ * In-memory demo state. Amounts are stored in cents (integers)
+ * to avoid floating point errors; the values come from the Figma designs.
  */
 
 export const STAFF_STATUSES = [
@@ -33,7 +33,7 @@ export function formatPEN(cents) {
   return `${sign}S/. ${soles}.${cts}`;
 }
 
-/** Convierte "114.75" en 11475. Devuelve null si el texto no es un importe válido. */
+/** Converts "114.75" into 11475. Returns null if the text is not a valid amount. */
 export function parseMoney(text) {
   const clean = String(text).trim().replace(/,/g, "");
   const match = /^(\d{1,7})(?:\.(\d{1,2}))?$/.exec(clean);
@@ -74,7 +74,7 @@ const parts = [
   { sku: "RAM-CRU-16G-D5", name: "RAM SODIMM Crucial 16GB DDR5 4800MHz CL40", category: "Memorias RAM", compat: "Laptops Lenovo Legion / Dell Latitude 5530", stock: 62, min: 10, price: 5200, icon: "ram" },
 ];
 
-// Solo se guarda rol, nombre y correo; nunca contraseñas.
+// Only role, name and email are stored; never passwords.
 const SESSION_KEY = "techfix.session";
 
 function readSession() {
@@ -91,7 +91,7 @@ function writeSession(session) {
     if (session) sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
     else sessionStorage.removeItem(SESSION_KEY);
   } catch {
-    /* almacenamiento no disponible: la sesión vive solo en memoria */
+    /* storage unavailable: the session lives only in memory */
   }
 }
 
@@ -106,7 +106,7 @@ function reducer(state, action) {
     case "login":
       return { ...state, session: action.session, signedOut: false };
     case "logout":
-      // signedOut distingue un cierre de sesión voluntario de un acceso sin sesión o de una sesión vencida.
+      // signedOut tells a voluntary sign-out apart from a visit without a session or an expired session.
       return { ...state, session: null, signedOut: action.voluntary !== false };
     case "clearSignedOut":
       return state.signedOut ? { ...state, signedOut: false } : state;
@@ -121,7 +121,7 @@ function reducer(state, action) {
         staffTickets: state.staffTickets.map((t) => (t.id === action.id ? { ...t, ...action.changes } : t)),
       };
     case "createConsultation": {
-      // Consulta nueva desde el chat: crea el ticket del cliente y lo envía a la cola del taller.
+      // New request from the chat: creates the customer's ticket and sends it to the workshop queue.
       const ids = [...state.staffTickets, ...state.clientTickets].map((t) => Number(t.id.split("-")[1]));
       const id = action.id || `TCK-${Math.max(...ids) + 1}`;
       const { summary, client } = action;
@@ -169,7 +169,7 @@ export function StoreProvider({ children }) {
     dispatch({ type: "login", session });
   }, []);
 
-  /** `voluntary: false` cuando el servidor dio la sesión por terminada: se pide acceso y se vuelve a la página. */
+  /** `voluntary: false` when the server ended the session: ask for access and return to the page. */
   const logout = useCallback(({ voluntary = true } = {}) => {
     writeSession(null);
     dispatch({ type: "logout", voluntary });

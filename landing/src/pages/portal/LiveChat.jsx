@@ -13,7 +13,7 @@ function welcomeMessage(firstName) {
   return `Hola${firstName ? `, ${firstName}` : ""}. Soy TechFix Copilot. Puedo orientarte con soporte y reparaciones, consultar componentes y cotizaciones, ayudarte a armar una PC según tu presupuesto y resolver consultas de garantía o logística. ¿Qué necesitas hoy?`;
 }
 
-/** Importe del servidor ("180.00") mostrado sin cálculos en el navegador. */
+/** Server amount ("180.00") shown without calculations in the browser. */
 const money = (amount) => formatPEN(parseMoney(amount));
 const PATTERNS = [
   { id: "hierarchical", name: "Jerárquico" },
@@ -68,7 +68,7 @@ function QuoteCard({ quote, busy, onAction }) {
   );
 }
 
-/** Chat conectado al patrón LangGraph: el cliente se identifica con la sesión del inicio de sesión. */
+/** Chat connected to the LangGraph pattern: the customer is identified by the sign-in session. */
 export default function LiveChat({ api = defaultChatApi }) {
   const { session, logout } = useStore();
   const navigate = useNavigate();
@@ -97,7 +97,7 @@ export default function LiveChat({ api = defaultChatApi }) {
       setMessages((m) => [...m, { id: Date.now() + 1, from: "bot", time: now(), text: data.reply, quote: data.quote, ticket: data.ticket }]);
     } catch (err) {
       if (err?.code === "session_required") {
-        // La sesión del servidor terminó: se cierra la local y se vuelve al chat después de ingresar.
+        // The server session ended: close the local one and come back to the chat after signing in.
         await authApi.logout?.();
         logout({ voluntary: false });
         navigate("/portal/acceso", { replace: true, state: { from: "/portal/asistente" } });
@@ -131,7 +131,7 @@ export default function LiveChat({ api = defaultChatApi }) {
     setError(null);
   };
 
-  // Solo la última tarjeta de presupuesto reacciona a los botones.
+  // Only the latest quote card reacts to the buttons.
   const lastQuoteId = [...messages].reverse().find((m) => m.quote)?.id;
 
   return (

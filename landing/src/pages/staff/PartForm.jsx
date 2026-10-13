@@ -6,7 +6,7 @@ import { centsToInput, parseMoney, PART_CATEGORIES, useStore } from "../../data/
 
 const SKU_RE = /^[A-Z0-9]+(?:-[A-Z0-9]+)*$/;
 
-/** Alta de un SKU nuevo (sin parámetro) o edición y ajuste de stock (con :sku). */
+/** Creates a new SKU (no parameter) or edits it and adjusts stock (with :sku). */
 export default function PartForm() {
   const { sku } = useParams();
   const { parts, dispatch } = useStore();

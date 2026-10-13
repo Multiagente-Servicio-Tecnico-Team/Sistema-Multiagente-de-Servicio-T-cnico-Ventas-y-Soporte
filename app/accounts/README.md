@@ -51,6 +51,9 @@ postman/techfix-auth.postman_collection.json   # Pruebas de API con Postman
 `usuario` = `{ id, nombre, apellido, email, rol }`. El rol viene de la columna `role` (`CUSTOMER`,
 `TECHNICIAN`, `ADMIN`); el registro público siempre crea `CUSTOMER`.
 
+El código está en inglés (`RegisterIn.first_name`, `last_name`, `phone`; `UserOut.role`; `SessionCustomer.first_name`)
+y los alias de Pydantic mantienen las claves JSON en español de esta tabla, así que el contrato no cambia.
+
 ## Reglas principales
 
 - Correo en minúsculas y único sin distinguir mayúsculas; teléfono en formato E.164 (`+51987654321`).

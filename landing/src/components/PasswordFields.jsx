@@ -12,7 +12,7 @@ const strengthLabel = ["Muy débil", "Débil", "Media", "Buena", "Fuerte"];
 
 export const isStrongPassword = (p) => PASSWORD_RULES.every((r) => r.test(p));
 
-/** Contraseña nueva + confirmación con requisitos en vivo (registro y restablecimiento). */
+/** New password + confirmation with live requirements (sign-up and reset). */
 export default function PasswordFields({ password, confirm, onPassword, onConfirm, errors = {}, label = "Contraseña", idPrefix = "reg" }) {
   const passed = PASSWORD_RULES.filter((r) => r.test(password)).length;
   const matches = confirm.length > 0 && confirm === password;

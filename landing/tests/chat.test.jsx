@@ -39,8 +39,8 @@ async function write(user, text) {
   await user.type(screen.getByLabelText("Mensaje"), `${text}{Enter}`);
 }
 
-describe("cliente del chat", () => {
-  it("envía POST /api/chat con cookie y sin datos del cliente", async () => {
+describe("chat client", () => {
+  it("sends POST /api/chat with the cookie and without customer data", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ conversation_id: "c1", reply: "Hola" }) });
     const api = createChatApi({ baseUrl: "http://chat.local/", fetchImpl });
     await api.sendMessage({ message: "Mi laptop no enciende" });
@@ -52,12 +52,12 @@ describe("cliente del chat", () => {
   });
 
   it.each([[401, "session_required"], [403, "customer_only"], [404, "not_found"], [429, "rate_limited"], [503, "unavailable"]])(
-    "traduce %i a %s", async (status, code) => {
+    "maps %i to %s", async (status, code) => {
       const api = createChatApi({ baseUrl: "http://chat.local", fetchImpl: vi.fn().mockResolvedValue({ ok: false, status, json: async () => ({}) }) });
       await expect(api.sendMessage({ message: "x" })).rejects.toMatchObject({ code });
     });
 
-  it("sin VITE_CHAT_URL queda en modo demostración", () => {
+  it("stays in demo mode without VITE_CHAT_URL", () => {
     expect(createChatApi().mode).toBe("mock");
   });
 
@@ -68,8 +68,8 @@ describe("cliente del chat", () => {
   });
 });
 
-describe("asistente conectado", () => {
-  it("saluda con la sesión, muestra presupuesto y ticket y acepta", async () => {
+describe("connected assistant", () => {
+  it("greets with the session, shows quote and ticket and accepts", async () => {
     const api = {
       mode: "api",
       sendMessage: vi.fn()
@@ -117,7 +117,7 @@ describe("asistente conectado", () => {
     expect(selector).toHaveValue("orchestrator");
   });
 
-  it("si la sesión terminó lleva al acceso", async () => {
+  it("goes to sign-in when the session ended", async () => {
     const api = { mode: "api", sendMessage: vi.fn().mockRejectedValue(new ChatError(CHAT_MESSAGES.session, { status: 401, code: "session_required" })) };
     const user = userEvent.setup();
     renderChat(api);
@@ -126,7 +126,7 @@ describe("asistente conectado", () => {
     expect(sessionStorage.getItem("techfix.session")).toBeNull();
   });
 
-  it("ante un error temporal permite reintentar", async () => {
+  it("allows retrying after a temporary error", async () => {
     const api = {
       mode: "api",
       sendMessage: vi.fn()
@@ -142,7 +142,7 @@ describe("asistente conectado", () => {
     expect(api.sendMessage).toHaveBeenCalledTimes(2);
   });
 
-  it("un técnico ve el aviso de que el chat es para clientes", async () => {
+  it("a technician sees that the chat is for customers", async () => {
     const api = { mode: "api", sendMessage: vi.fn().mockRejectedValue(new ChatError(CHAT_MESSAGES.customerOnly, { status: 403, code: "customer_only" })) };
     const user = userEvent.setup();
     renderChat(api);
