@@ -1,11 +1,11 @@
-"""Contrato común de POST /api/chat para todos los patrones LangGraph del equipo."""
+"""Shared POST /api/chat contract for all the team LangGraph patterns."""
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ChatIn(BaseModel):
-    # extra="ignore": un "email" o "customer_id" enviado por el navegador se descarta.
+    # extra="ignore": an "email" or "customer_id" sent by the browser is discarded.
     model_config = ConfigDict(extra="ignore")
 
     conversation_id: str | None = Field(default=None, max_length=64)
@@ -14,7 +14,7 @@ class ChatIn(BaseModel):
     pattern: Literal["hierarchical", "orchestrator", "decentralized"] = "hierarchical"
 
     @model_validator(mode="after")
-    def mensaje_o_accion(self) -> "ChatIn":
+    def require_message_or_action(self) -> "ChatIn":
         if self.message is not None:
             self.message = self.message.strip()
         if not self.action and not self.message:
@@ -24,7 +24,7 @@ class ChatIn(BaseModel):
 
 class QuoteLine(BaseModel):
     label: str
-    amount: str  # Decimal con dos decimales, como texto
+    amount: str  # Decimal with two decimal places, as text
 
 
 class QuoteOut(BaseModel):
@@ -36,7 +36,7 @@ class QuoteOut(BaseModel):
 
 class TicketOut(BaseModel):
     code: str
-    status: str  # valores de ticket_status_enum del script de BD
+    status: str  # ticket_status_enum values from the database script
 
 
 class ChatOut(BaseModel):

@@ -1,9 +1,9 @@
-"""Patrón de referencia del chat: implementa el contrato común con un grafo LangGraph determinista.
+"""Reference chat pattern: implements the shared contract with a deterministic LangGraph graph.
 
-Sirve para probar el frontend y la sesión sin depender de Groq. Los patrones del equipo reemplazan el grafo
-por el suyo y mantienen la ruta, la dependencia de sesión y el formato de respuesta.
+Used to test the frontend and the session without depending on Groq. The team patterns replace the graph
+with their own and keep the route, the session dependency and the response format.
 
-Ejecutar:  uvicorn app.chat.reference:create_reference_app --factory --host localhost --port 8001
+Run:  uvicorn app.chat.reference:create_reference_app --factory --host localhost --port 8001
 """
 import logging
 import secrets
@@ -31,27 +31,28 @@ from app.chat.models import Ticket, TicketStatus
 
 logger = logging.getLogger(__name__)
 
+# Customer keywords: the chat is in Spanish, so the matched terms stay in Spanish.
 STORAGE_WORDS = ("ssd", "disco", "almacenamiento", "no detecta", "lento", "lentitud")
 
 
 class ChatState(TypedDict, total=False):
     message: str
-    nombre: str
+    name: str
     diagnosis: str
     items: list[dict]
     quote: dict
     reply: str
 
 
-def atencion(state: ChatState) -> dict:
-    """Agente de atención: pide más datos si el mensaje no describe equipo y síntoma."""
+def attention(state: ChatState) -> dict:
+    """Attention agent: asks for more details if the message does not describe the device and symptom."""
     if len(state["message"].split()) < 4:
-        return {"reply": f"Hola {state['nombre']}. Cuéntame qué equipo tienes (marca y modelo) y qué falla presenta."}
+        return {"reply": f"Hola {state['name']}. Cuéntame qué equipo tienes (marca y modelo) y qué falla presenta."}
     return {}
 
 
-def soporte_tecnico(state: ChatState) -> dict:
-    """Agente técnico de referencia: diagnóstico provisional por palabras clave."""
+def technical_support(state: ChatState) -> dict:
+    """Reference technical agent: provisional diagnosis from keywords."""
     text = state["message"].lower()
     if any(word in text for word in STORAGE_WORDS):
         return {"diagnosis": "Posible falla de la unidad de almacenamiento.",
@@ -62,18 +63,18 @@ def soporte_tecnico(state: ChatState) -> dict:
 def build_reference_graph(sales_graph=None):
     sales_graph = sales_graph or build_sales_graph()
 
-    def ventas(state: ChatState) -> dict:
+    def sales(state: ChatState) -> dict:
         request = {"equipment": state["message"][:200], "diagnosis": state["diagnosis"], "items": state["items"]}
         return {"quote": sales_graph.invoke({"request": request})["quote"]}
 
     builder = StateGraph(ChatState)
-    builder.add_node("atencion", atencion)
-    builder.add_node("soporte_tecnico", soporte_tecnico)
-    builder.add_node("ventas", ventas)
-    builder.add_edge(START, "atencion")
-    builder.add_conditional_edges("atencion", lambda s: END if s.get("reply") else "soporte_tecnico")
-    builder.add_edge("soporte_tecnico", "ventas")
-    builder.add_edge("ventas", END)
+    builder.add_node("attention", attention)
+    builder.add_node("technical_support", technical_support)
+    builder.add_node("sales", sales)
+    builder.add_edge(START, "attention")
+    builder.add_conditional_edges("attention", lambda s: END if s.get("reply") else "technical_support")
+    builder.add_edge("technical_support", "sales")
+    builder.add_edge("sales", END)
     return builder.compile(name="chat_reference_graph")
 
 
@@ -110,7 +111,7 @@ def create_reference_app(settings: Settings | None = None, session_factory: sess
 
     @app.exception_handler(OperationalError)
     async def on_db_unavailable(_request: Request, _exc: OperationalError):
-        logger.error("Base de datos no disponible")
+        logger.error("Database unavailable")
         return JSONResponse(status_code=503, content={"detail": "El asistente no está disponible. Inténtalo en unos minutos."})
 
     def set_ticket_status(ticket_id: int, customer_id: int, status: TicketStatus) -> None:
@@ -128,7 +129,7 @@ def create_reference_app(settings: Settings | None = None, session_factory: sess
         with lock:
             if body.conversation_id:
                 conv = conversations.get(body.conversation_id)
-                # Igual respuesta si no existe o es de otro cliente.
+                # Same response whether it does not exist or belongs to another customer.
                 if conv is None or conv["customer_id"] != customer.id:
                     return JSONResponse(status_code=404, content={"detail": "Conversación no encontrada."})
                 conversation_id = body.conversation_id
@@ -155,7 +156,7 @@ def create_reference_app(settings: Settings | None = None, session_factory: sess
             return ChatOut(conversation_id=conversation_id, quote=quote, ticket=ticket,
                            reply="Tienes un presupuesto pendiente. Acéptalo o recházalo para continuar.")
 
-        result = graph.invoke({"message": body.message, "nombre": customer.nombre})
+        result = graph.invoke({"message": body.message, "name": customer.first_name})
         if result.get("reply"):
             return ChatOut(conversation_id=conversation_id, reply=result["reply"])
 
@@ -170,7 +171,7 @@ def create_reference_app(settings: Settings | None = None, session_factory: sess
             ticket = TicketOut(code=row.code, status=TicketStatus.QUOTED.value)
             conv.update(quote=quote, ticket=ticket, ticket_id=row.id)
 
-        reply = (f"Gracias, {customer.nombre}. Diagnóstico provisional: {result['diagnosis']} "
+        reply = (f"Gracias, {customer.first_name}. Diagnóstico provisional: {result['diagnosis']} "
                  f"Registré el ticket {ticket.code} y preparé este presupuesto con el catálogo de prueba. "
                  "Revísalo y acéptalo para iniciar la reparación.")
         return ChatOut(conversation_id=conversation_id, reply=reply, quote=quote, ticket=ticket)
