@@ -105,3 +105,4 @@
   datos y última cotización. UI conserva tarjetas/filtros/búsqueda y elimina aprobar/
   revisar/admin para ser solo lectura. Build Vite aprobado. Sin consultas ni escrituras
   PostgreSQL. Evidencia: spec 15, docs 18.
+- Seed de inventario (2026-10-13): precios de referencia en PEN ajustados con cat?logos peruanos; RAM y almacenamiento compactados para retirar filas redundantes y SKU duplicados entre bloques. Filas: 438 ? 310; 310 c?digos ?nicos y sin duplicados exactos de nombre/categor?a. Limitaci?n: ambos `ON CONFLICT (code) DO NOTHING` no actualizan cat?logo ya sembrado; no se ejecut? SQL ni se toc? PostgreSQL. Evidencia: spec 16, docs 19.
