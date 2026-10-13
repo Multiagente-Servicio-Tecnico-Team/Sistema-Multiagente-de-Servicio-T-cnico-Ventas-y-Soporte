@@ -1,7 +1,7 @@
-"""Mapping of the users table from the team script (creacion_tablas_sin_inserciones.sql).
+"""Modelo de la tabla users del script del equipo (creacion_tablas_sin_inserciones.sql).
 
-The script creates the schema in PostgreSQL; this module only maps it. create_all is used only in
-SQLite tests.
+El esquema lo crea el script en PostgreSQL; aquí solo se mapea. create_all se usa únicamente en
+pruebas con SQLite.
 """
 import enum
 from datetime import datetime
@@ -23,7 +23,7 @@ class Role(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    # BIGINT in PostgreSQL; INTEGER in SQLite so autoincrement works in the tests.
+    # BIGINT en PostgreSQL; INTEGER en SQLite para que funcione el autoincremento de las pruebas.
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -41,7 +41,7 @@ class User(Base):
 
 
 class RecoveryToken(Base):
-    """recovery_tokens table. The token column stores the SHA-256 hash, never the link token."""
+    """Tabla recovery_tokens. La columna token guarda el hash SHA-256, nunca el token del enlace."""
 
     __tablename__ = "recovery_tokens"
 

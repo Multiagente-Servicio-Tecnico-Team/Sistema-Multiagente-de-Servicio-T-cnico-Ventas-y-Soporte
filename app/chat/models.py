@@ -1,4 +1,4 @@
-"""Mapping of the tickets table from the team script (does not create tables in PostgreSQL)."""
+"""Mapeo de la tabla tickets del script del equipo (no crea tablas en PostgreSQL)."""
 import enum
 from datetime import datetime
 

@@ -1,1 +1,1 @@
-"""Shared contract of the portal chat and a reference pattern to test it."""
+"""Contrato común del chat del portal y patrón de referencia para probarlo."""

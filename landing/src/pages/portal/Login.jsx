@@ -15,8 +15,8 @@ export function FormAlert({ children }) {
 }
 
 /**
- * Sign-in form shared by the customer portal and the workshop staff.
- * Calls POST /login through the authentication client (or the simulator without a backend).
+ * Formulario de acceso reutilizado por el portal del cliente y por el personal del taller.
+ * Llama a POST /login mediante el cliente de autenticación (o al simulador si no hay backend).
  */
 export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api = defaultApi }) {
   const { session, login, logout } = useStore();
@@ -28,7 +28,7 @@ export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // With a session for this role already open, skip the form and go straight to the area.
+  // Si ya hay sesión con este rol, el formulario no tiene sentido: ir directo al área.
   if (session?.role === role && !loading) return <Navigate to={location.state?.from || defaultTo} replace />;
 
   const submit = async (e) => {
@@ -43,19 +43,19 @@ export function LoginForm({ role, badge, title, subtitle, defaultTo, footer, api
 
     setLoading(true);
     try {
-      const user = await api.login({ email, password });
+      const usuario = await api.login({ email, password });
       setPassword("");
-      // The server decides the role (users table); the screen only states the expected area.
-      const area = areaForRole(user.rol, role);
+      // El rol lo decide el servidor (tabla users); la pantalla solo indica el área esperada.
+      const area = areaForRole(usuario.rol, role);
       if (role === "staff" && area === "client") {
-        // The server already opened a session: close it on both sides so they do not diverge.
+        // El servidor ya abrió sesión: se cierra en ambos lados para no dejar estados distintos.
         await api.logout?.();
         logout();
         setFormError(MESSAGES.notStaff);
         setLoading(false);
         return;
       }
-      login({ role: area, email: user.email, name: fullName(user) || user.email });
+      login({ role: area, email: usuario.email, name: fullName(usuario) || usuario.email });
       const target = area === role ? location.state?.from || defaultTo : "/taller";
       navigate(target, { replace: true });
     } catch (err) {

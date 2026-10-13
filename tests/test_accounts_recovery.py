@@ -1,4 +1,4 @@
-"""Tests for /recuperar and /restablecer with in-memory SQLite and a fake mailer."""
+"""Pruebas de /recuperar y /restablecer con SQLite en memoria y un correo simulado."""
 import hashlib
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
@@ -60,7 +60,7 @@ def login(client, password):
 
 # ---------- POST /recuperar ----------
 
-def test_same_response_whether_or_not_account_exists(env):
+def test_respuesta_identica_exista_o_no_la_cuenta(env):
     client, _, mailer = env
     existing = client.post("/recuperar", json={"email": "MARTIN.GOMEZ@gmail.com"})
     missing = client.post("/recuperar", json={"email": "nadie@techfix.ai"})
@@ -71,7 +71,7 @@ def test_same_response_whether_or_not_account_exists(env):
     assert "token" not in existing.text
 
 
-def test_stores_only_token_hash_and_sends_link(env):
+def test_guarda_solo_el_hash_del_token_y_envia_el_enlace(env):
     client, factory, mailer = env
     client.post("/recuperar", json={"email": EMAIL})
     raw = mailer.last_token()
@@ -85,14 +85,14 @@ def test_stores_only_token_hash_and_sends_link(env):
     assert "Hola Martín" in mailer.sent[0]["html"] and "15 minutos" in mailer.sent[0]["html"]
 
 
-def test_invalid_email_returns_422(env):
+def test_correo_invalido_responde_422(env):
     client, _, mailer = env
     res = client.post("/recuperar", json={"email": "no-es-correo"})
     assert res.status_code == 422 and res.json()["field"] == "email"
     assert mailer.sent == []
 
 
-def test_inactive_account_gets_no_email(env):
+def test_cuenta_inactiva_no_recibe_correo(env):
     client, factory, mailer = env
     with factory() as db:
         db.execute(update(User).values(active=False))
@@ -101,14 +101,14 @@ def test_inactive_account_gets_no_email(env):
     assert mailer.sent == [] and tokens(factory) == []
 
 
-def test_request_limit_per_email(env):
+def test_limite_de_solicitudes_por_correo(env):
     client, _, _ = env
     for _ in range(5):
         assert client.post("/recuperar", json={"email": EMAIL}).status_code == 200
     assert client.post("/recuperar", json={"email": EMAIL}).status_code == 429
 
 
-def test_email_failure_does_not_change_response(env):
+def test_fallo_del_correo_no_cambia_la_respuesta(env):
     client, _, mailer = env
     mailer.fail = True
     res = client.post("/recuperar", json={"email": EMAIL})
@@ -117,7 +117,7 @@ def test_email_failure_does_not_change_response(env):
 
 # ---------- POST /restablecer ----------
 
-def test_reset_makes_only_new_password_valid(env):
+def test_restablece_y_solo_vale_la_contrasena_nueva(env):
     client, factory, mailer = env
     client.post("/recuperar", json={"email": EMAIL})
     res = client.post("/restablecer", json={"token": mailer.last_token(), "password": NEW_PASSWORD})
@@ -128,7 +128,7 @@ def test_reset_makes_only_new_password_valid(env):
     assert all(t.used for t in tokens(factory))
 
 
-def test_link_can_be_used_only_once(env):
+def test_el_enlace_solo_se_usa_una_vez(env):
     client, _, mailer = env
     client.post("/recuperar", json={"email": EMAIL})
     token = mailer.last_token()
@@ -138,7 +138,7 @@ def test_link_can_be_used_only_once(env):
     assert again.json() == {"detail": "El enlace no es válido o ya expiró.", "code": "invalid_token"}
 
 
-def test_only_latest_requested_link_is_valid(env):
+def test_solo_vale_el_ultimo_enlace_solicitado(env):
     client, _, mailer = env
     client.post("/recuperar", json={"email": EMAIL})
     first = mailer.last_token()
@@ -149,7 +149,7 @@ def test_only_latest_requested_link_is_valid(env):
     assert client.post("/restablecer", json={"token": second, "password": NEW_PASSWORD}).status_code == 200
 
 
-def test_expired_link(env):
+def test_enlace_vencido(env):
     client, factory, mailer = env
     client.post("/recuperar", json={"email": EMAIL})
     with factory() as db:
@@ -159,13 +159,13 @@ def test_expired_link(env):
     assert login(client, PASSWORD).status_code == 200
 
 
-def test_unknown_token(env):
+def test_token_inexistente(env):
     client, _, _ = env
     res = client.post("/restablecer", json={"token": "x" * 43, "password": NEW_PASSWORD})
     assert res.status_code == 410 and res.json()["code"] == "invalid_token"
 
 
-def test_weak_password_does_not_consume_link(env):
+def test_contrasena_debil_no_consume_el_enlace(env):
     client, _, mailer = env
     client.post("/recuperar", json={"email": EMAIL})
     token = mailer.last_token()
@@ -176,7 +176,7 @@ def test_weak_password_does_not_consume_link(env):
     assert client.post("/restablecer", json={"token": token, "password": NEW_PASSWORD}).status_code == 200
 
 
-def test_account_deactivated_after_requesting_link(env):
+def test_cuenta_desactivada_despues_de_pedir_el_enlace(env):
     client, factory, mailer = env
     client.post("/recuperar", json={"email": EMAIL})
     with factory() as db:
@@ -185,7 +185,7 @@ def test_account_deactivated_after_requesting_link(env):
     assert client.post("/restablecer", json={"token": mailer.last_token(), "password": NEW_PASSWORD}).status_code == 410
 
 
-def test_reset_closes_open_sessions(env):
+def test_restablecer_cierra_las_sesiones_abiertas(env):
     client, _, mailer = env
     assert login(client, PASSWORD).status_code == 200
     assert client.get("/me").status_code == 200
@@ -198,7 +198,7 @@ def test_reset_closes_open_sessions(env):
     assert client.get("/me").status_code == 200
 
 
-def test_reset_clears_failed_attempts(env):
+def test_restablecer_reinicia_los_intentos_fallidos(env):
     client, _, mailer = env
     for _ in range(5):
         login(client, "Mala#2026")
@@ -208,15 +208,15 @@ def test_reset_clears_failed_attempts(env):
     assert login(client, NEW_PASSWORD).status_code == 200
 
 
-# ---------- Email ----------
+# ---------- Correo ----------
 
-def test_outbox_saves_email_to_file(tmp_path):
+def test_outbox_guarda_el_correo_en_un_archivo(tmp_path):
     path = OutboxMailer(tmp_path).send("ana@demo.pe", "Asunto", "<p>hola</p>")
     content = path.read_text(encoding="utf-8")
     assert path.parent == tmp_path and "Para: ana@demo.pe" in content and "<p>hola</p>" in content
 
 
-def test_template_escapes_name():
+def test_plantilla_escapa_el_nombre():
     html = render_password_reset("<script>alert(1)</script>", "http://localhost:5173/portal/restablecer?token=abc", 15)
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
