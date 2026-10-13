@@ -92,6 +92,7 @@ def create_ticket(
                 "cliente_id": user_id,
                 "title": f"{product} - {category}"[:200],
                 "failure_description": symptoms,
+                "diagnosis_type": "NONE",
             },
         )
 
@@ -132,11 +133,16 @@ def update_ticket_diagnosis(
     with engine.begin() as connection:
         ticket = _table(connection, "tickets")
         id_column = _column(ticket, "id")
-        diagnosis_column = _column(ticket, "provisional_diagnosis")
+        diagnosis_column = _column(
+            ticket, "hardware_diagnosis", "provisional_diagnosis"
+        )
         status_column = _column(ticket, "status", "estado")
         if id_column is None or diagnosis_column is None:
-            raise RuntimeError("La tabla tickets no permite guardar el diagnóstico provisional")
+            raise RuntimeError("La tabla tickets no permite guardar el diagnóstico")
         values = {diagnosis_column: diagnosis}
+        diagnosis_type_column = _column(ticket, "diagnosis_type")
+        if diagnosis_type_column is not None:
+            values[diagnosis_type_column] = "HARDWARE"
         if status_column is not None:
             values[status_column] = "IN_DIAGNOSIS"
         connection.execute(
@@ -405,6 +411,389 @@ class ServiceRepository:
             )
         return dict(customer) if customer else None
 
+    def create_intake_ticket(
+        self,
+        *,
+        code: str,
+        customer_id: int,
+        title: str,
+        failure_description: str,
+        request_type: str,
+    ) -> int:
+        if request_type not in {"REPAIR", "SUPPORT", "SALE", "PC_BUILD", "WARRANTY_CLAIM"}:
+            raise ValueError("Tipo de ticket no admitido por el esquema.")
+        query = text(
+            """
+            INSERT INTO tickets (
+                code, customer_id, title, failure_description, request_type, status
+            )
+            VALUES (
+                :code, :customer_id, :title, :failure_description,
+                CAST(:request_type AS request_type_enum),
+                CAST('NEW' AS ticket_status_enum)
+            )
+            RETURNING id
+            """
+        )
+        with self._session_factory() as session, session.begin():
+            ticket_id = session.execute(
+                query,
+                {
+                    "code": code,
+                    "customer_id": customer_id,
+                    "title": title[:200],
+                    "failure_description": failure_description,
+                    "request_type": request_type,
+                },
+            ).scalar_one()
+        return int(ticket_id)
+
+    def update_ticket_diagnosis(
+        self,
+        *,
+        ticket_id: int,
+        customer_id: int,
+        diagnosis: str,
+        diagnosis_type: str,
+    ) -> None:
+        if diagnosis_type not in {"HARDWARE", "SOFTWARE", "HYBRID"}:
+            raise ValueError("Tipo de diagnóstico no admitido.")
+        query = text(
+            """
+            UPDATE tickets
+            SET diagnosis_type = CAST(:diagnosis_type AS diagnosis_type_enum),
+                hardware_diagnosis = :hardware_diagnosis,
+                software_diagnosis = :software_diagnosis,
+                status = CAST('IN_DIAGNOSIS' AS ticket_status_enum),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :ticket_id
+              AND customer_id = :customer_id
+              AND request_type IN (
+                  CAST('REPAIR' AS request_type_enum),
+                  CAST('SUPPORT' AS request_type_enum)
+              )
+              AND status IN (
+                  CAST('NEW' AS ticket_status_enum),
+                  CAST('IN_DIAGNOSIS' AS ticket_status_enum)
+              )
+            RETURNING id
+            """
+        )
+        with self._session_factory() as session, session.begin():
+            updated_ticket = session.execute(
+                query,
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": customer_id,
+                    "diagnosis_type": diagnosis_type,
+                    "hardware_diagnosis": (
+                        diagnosis if diagnosis_type in {"HARDWARE", "HYBRID"} else None
+                    ),
+                    "software_diagnosis": (
+                        diagnosis if diagnosis_type in {"SOFTWARE", "HYBRID"} else None
+                    ),
+                },
+            ).scalar_one_or_none()
+            if updated_ticket is None:
+                raise LookupError("No se pudo guardar el diagnóstico en el ticket.")
+
+    def accept_ticket_quote(
+        self,
+        *,
+        ticket_id: int,
+        customer_id: int,
+        quote_type: str,
+        labor_cost: Decimal,
+        parts_cost: Decimal,
+        total_amount: Decimal,
+        observations: str,
+        parts: list[dict[str, Any]],
+        payment_code: str,
+    ) -> dict[str, Any]:
+        if quote_type not in {"REPAIR", "DIRECT_SALE", "PC_BUILD"}:
+            raise ValueError("Tipo de cotización no admitido.")
+        if total_amount <= 0 or (quote_type != "REPAIR" and not parts):
+            raise ValueError("La cotización requiere un importe positivo y artículos.")
+        insert_quote = text(
+            """
+            INSERT INTO quotes (
+                ticket_id, quote_type, labor_cost, parts_cost, total_amount,
+                status, observations
+            )
+            VALUES (
+                :ticket_id, CAST(:quote_type AS quote_type_enum), :labor_cost,
+                :parts_cost, :total_amount, CAST('ACCEPTED' AS quote_status_enum),
+                :observations
+            )
+            RETURNING id
+            """
+        )
+        insert_detail = text(
+            """
+            INSERT INTO quote_details (
+                quote_id, spare_part_id, quantity, unit_price, subtotal
+            )
+            VALUES (:quote_id, :spare_part_id, :quantity, :unit_price, :subtotal)
+            """
+        )
+        insert_payment = text(
+            """
+            INSERT INTO payments (
+                ticket_id, quote_id, customer_id, payment_code, amount, status
+            )
+            VALUES (
+                :ticket_id, :quote_id, :customer_id, :payment_code, :amount,
+                CAST('PENDING' AS payment_status_enum)
+            )
+            RETURNING id, payment_code, amount, status
+            """
+        )
+        update_ticket = text(
+            """
+            UPDATE tickets
+            SET status = CAST('PAYMENT_PENDING' AS ticket_status_enum),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :ticket_id AND customer_id = :customer_id
+            """
+        )
+        with self._session_factory() as session, session.begin():
+            existing = session.execute(
+                text(
+                    """
+                    SELECT q.id AS quote_id, p.id AS payment_id,
+                           p.payment_code, p.status AS payment_status
+                    FROM quotes q
+                    JOIN payments p ON p.quote_id = q.id
+                    JOIN tickets t ON t.id = q.ticket_id
+                    WHERE q.ticket_id = :ticket_id
+                      AND t.customer_id = :customer_id
+                      AND q.status::text = 'ACCEPTED'
+                    ORDER BY q.id DESC
+                    LIMIT 1
+                    """
+                ),
+                {"ticket_id": ticket_id, "customer_id": customer_id},
+            ).mappings().first()
+            if existing:
+                return dict(existing)
+
+            quote_id = session.execute(
+                insert_quote,
+                {
+                    "ticket_id": ticket_id,
+                    "quote_type": quote_type,
+                    "labor_cost": labor_cost,
+                    "parts_cost": parts_cost,
+                    "total_amount": total_amount,
+                    "observations": observations,
+                },
+            ).scalar_one()
+            for part in parts:
+                session.execute(
+                    insert_detail,
+                    {
+                        "quote_id": quote_id,
+                        "spare_part_id": part["id"],
+                        "quantity": part["quantity"],
+                        "unit_price": part["unit_price"],
+                        "subtotal": part["subtotal"],
+                    },
+                )
+            payment = session.execute(
+                insert_payment,
+                {
+                    "ticket_id": ticket_id,
+                    "quote_id": quote_id,
+                    "customer_id": customer_id,
+                    "payment_code": payment_code,
+                    "amount": total_amount,
+                },
+            ).mappings().one()
+            updated = session.execute(
+                update_ticket,
+                {"ticket_id": ticket_id, "customer_id": customer_id},
+            )
+            if updated.rowcount != 1:
+                raise LookupError("No se pudo actualizar el ticket comercial.")
+        return {
+            "quote_id": int(quote_id),
+            "payment_id": int(payment["id"]),
+            "payment_code": payment["payment_code"],
+            "payment_status": payment["status"],
+        }
+
+    def cancel_ticket(self, ticket_id: int, customer_id: int) -> None:
+        query = text(
+            """
+            UPDATE tickets
+            SET status = CAST('CANCELLED' AS ticket_status_enum),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :ticket_id AND customer_id = :customer_id
+            """
+        )
+        with self._session_factory() as session, session.begin():
+            result = session.execute(
+                query, {"ticket_id": ticket_id, "customer_id": customer_id}
+            )
+            if result.rowcount != 1:
+                raise LookupError("No se pudo cancelar el ticket.")
+
+    def find_warranty(self, warranty_code: str) -> dict[str, Any] | None:
+        query = text(
+            """
+            SELECT id, customer_id, warranty_code, item_or_service_name,
+                   warranty_months, start_date, end_date, status::text AS status,
+                   end_date >= CURRENT_DATE AS not_expired
+            FROM warranties
+            WHERE warranty_code = :warranty_code
+            LIMIT 1
+            """
+        )
+        with self._session_factory() as session:
+            row = session.execute(
+                query, {"warranty_code": warranty_code.strip()}
+            ).mappings().first()
+        return dict(row) if row else None
+
+    def create_warranty_claim(
+        self,
+        *,
+        warranty_id: int,
+        ticket_id: int,
+        customer_id: int,
+        claim_code: str,
+        reason: str,
+    ) -> None:
+        query = text(
+            """
+            INSERT INTO warranty_claims (warranty_id, ticket_id, claim_code, reason, status)
+            SELECT :warranty_id, :ticket_id, :claim_code, :reason,
+                   CAST('IN_REVIEW' AS warranty_claim_status_enum)
+            WHERE EXISTS (
+                SELECT 1 FROM warranties
+                WHERE id = :warranty_id AND customer_id = :customer_id
+            )
+            """
+        )
+        update_ticket = text(
+            """
+            UPDATE tickets
+            SET status = CAST('WARRANTY_IN_REVIEW' AS ticket_status_enum),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :ticket_id AND customer_id = :customer_id
+            """
+        )
+        with self._session_factory() as session, session.begin():
+            inserted = session.execute(
+                query,
+                {
+                    "warranty_id": warranty_id,
+                    "ticket_id": ticket_id,
+                    "customer_id": customer_id,
+                    "claim_code": claim_code,
+                    "reason": reason,
+                },
+            )
+            if inserted.rowcount != 1:
+                raise LookupError("La póliza no corresponde al cliente.")
+            updated = session.execute(
+                update_ticket,
+                {"ticket_id": ticket_id, "customer_id": customer_id},
+            )
+            if updated.rowcount != 1:
+                raise LookupError("No se pudo actualizar el ticket de garantía.")
+
+    def create_logistics_record(
+        self,
+        *,
+        ticket_id: int,
+        customer_id: int,
+        mode: str,
+        courier_company: str | None = None,
+        shipping_address: str | None = None,
+    ) -> int:
+        if mode not in {"PHYSICAL_STORE", "COURIER_SHIPMENT"}:
+            raise ValueError("Modalidad logística no admitida.")
+        if mode == "COURIER_SHIPMENT" and not (
+            courier_company and shipping_address
+        ):
+            raise ValueError("Courier requiere empresa y dirección.")
+        with self._session_factory() as session, session.begin():
+            existing = session.execute(
+                text(
+                    """
+                    SELECT l.id, l.mode::text AS mode, l.status::text AS status,
+                           l.courier_company, l.shipping_address
+                    FROM logistics_records l
+                    JOIN tickets t ON t.id = l.ticket_id
+                    WHERE l.ticket_id = :ticket_id AND t.customer_id = :customer_id
+                    LIMIT 1
+                    """
+                ),
+                {"ticket_id": ticket_id, "customer_id": customer_id},
+            ).mappings().first()
+            if existing is not None:
+                same_preference = (
+                    existing["mode"] == mode
+                    and existing["courier_company"] == courier_company
+                    and existing["shipping_address"] == shipping_address
+                )
+                if same_preference:
+                    return int(existing["id"])
+                if existing["status"] != "PENDING_RECEIPT":
+                    raise ValueError(
+                        "La modalidad logística no puede cambiar después de la recepción."
+                    )
+                updated_id = session.execute(
+                    text(
+                        """
+                        UPDATE logistics_records
+                        SET mode = CAST(:mode AS logistics_mode_enum),
+                            courier_company = :courier_company,
+                            shipping_address = :shipping_address,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = :record_id
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "record_id": existing["id"],
+                        "mode": mode,
+                        "courier_company": courier_company,
+                        "shipping_address": shipping_address,
+                    },
+                ).scalar_one_or_none()
+                if updated_id is None:
+                    raise LookupError("No se pudo actualizar la modalidad logística.")
+                return int(updated_id)
+            record_id = session.execute(
+                text(
+                    """
+                    INSERT INTO logistics_records (
+                        ticket_id, mode, status, courier_company, shipping_address
+                    )
+                    SELECT :ticket_id, CAST(:mode AS logistics_mode_enum),
+                           CAST('PENDING_RECEIPT' AS logistics_status_enum),
+                           :courier_company, :shipping_address
+                    WHERE EXISTS (
+                        SELECT 1 FROM tickets
+                        WHERE id = :ticket_id AND customer_id = :customer_id
+                    )
+                    RETURNING id
+                    """
+                ),
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": customer_id,
+                    "mode": mode,
+                    "courier_company": courier_company,
+                    "shipping_address": shipping_address,
+                },
+            ).scalar_one_or_none()
+            if record_id is None:
+                raise LookupError("No se pudo registrar la modalidad logística.")
+        return int(record_id)
+
     def create_ticket(
         self,
         *,
@@ -414,7 +803,10 @@ class ServiceRepository:
         failure_description: str,
         request_type: str,
         provisional_diagnosis: str,
+        diagnosis_type: str = "HARDWARE",
     ) -> int:
+        if diagnosis_type not in {"HARDWARE", "SOFTWARE", "HYBRID", "NONE"}:
+            raise ValueError("Tipo de diagnóstico no admitido por el esquema.")
         query = text(
             """
             INSERT INTO tickets (
@@ -423,8 +815,10 @@ class ServiceRepository:
                 title,
                 failure_description,
                 request_type,
+                diagnosis_type,
                 status,
-                provisional_diagnosis
+                hardware_diagnosis,
+                software_diagnosis
             )
             VALUES (
                 :code,
@@ -432,8 +826,10 @@ class ServiceRepository:
                 :title,
                 :failure_description,
                 CAST(:request_type AS request_type_enum),
+                CAST(:diagnosis_type AS diagnosis_type_enum),
                 CAST('IN_DIAGNOSIS' AS ticket_status_enum),
-                :provisional_diagnosis
+                :hardware_diagnosis,
+                :software_diagnosis
             )
             RETURNING id
             """
@@ -447,7 +843,17 @@ class ServiceRepository:
                     "title": title,
                     "failure_description": failure_description,
                     "request_type": request_type,
-                    "provisional_diagnosis": provisional_diagnosis,
+                    "diagnosis_type": diagnosis_type,
+                    "hardware_diagnosis": (
+                        provisional_diagnosis
+                        if diagnosis_type in {"HARDWARE", "HYBRID"}
+                        else None
+                    ),
+                    "software_diagnosis": (
+                        provisional_diagnosis
+                        if diagnosis_type in {"SOFTWARE", "HYBRID"}
+                        else None
+                    ),
                 },
             ).scalar_one()
         return int(ticket_id)
@@ -462,13 +868,15 @@ class ServiceRepository:
         )
         query = text(
             """
-            SELECT id, code, name, unit_price, current_stock
+            SELECT id, code, name, category, description, unit_price, current_stock
             FROM spare_parts
             WHERE active IS TRUE
               AND (
                     LOWER(code) = LOWER(:term)
                     OR LOWER(name) = LOWER(:normalized_name)
                     OR name ILIKE :pattern ESCAPE '!'
+                    OR COALESCE(category, '') ILIKE :pattern ESCAPE '!'
+                    OR COALESCE(description, '') ILIKE :pattern ESCAPE '!'
               )
             ORDER BY
                 CASE
@@ -535,7 +943,10 @@ class ServiceRepository:
         total_amount: Decimal,
         observations: str,
         parts: list[dict[str, Any]],
+        diagnosis_type: str = "HARDWARE",
     ) -> tuple[int, int]:
+        if diagnosis_type not in {"HARDWARE", "SOFTWARE", "HYBRID", "NONE"}:
+            raise ValueError("Tipo de diagnóstico no admitido por el esquema.")
         insert_ticket = text(
             """
             INSERT INTO tickets (
@@ -544,8 +955,10 @@ class ServiceRepository:
                 title,
                 failure_description,
                 request_type,
+                diagnosis_type,
                 status,
-                provisional_diagnosis
+                hardware_diagnosis,
+                software_diagnosis
             )
             VALUES (
                 :code,
@@ -553,8 +966,10 @@ class ServiceRepository:
                 :title,
                 :failure_description,
                 CAST(:request_type AS request_type_enum),
+                CAST(:diagnosis_type AS diagnosis_type_enum),
                 CAST('IN_DIAGNOSIS' AS ticket_status_enum),
-                :provisional_diagnosis
+                :hardware_diagnosis,
+                :software_diagnosis
             )
             RETURNING id
             """
@@ -615,7 +1030,17 @@ class ServiceRepository:
                     "title": title,
                     "failure_description": failure_description,
                     "request_type": request_type,
-                    "provisional_diagnosis": provisional_diagnosis,
+                    "diagnosis_type": diagnosis_type,
+                    "hardware_diagnosis": (
+                        provisional_diagnosis
+                        if diagnosis_type in {"HARDWARE", "HYBRID"}
+                        else None
+                    ),
+                    "software_diagnosis": (
+                        provisional_diagnosis
+                        if diagnosis_type in {"SOFTWARE", "HYBRID"}
+                        else None
+                    ),
                 },
             ).scalar_one()
             quote_id = session.execute(
