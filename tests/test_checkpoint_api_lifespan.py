@@ -36,6 +36,7 @@ def ownership_mock(monkeypatch):
 def test_lifespan_reuses_saver_and_closes(monkeypatch):
     storage = resources()
     graph = MagicMock()
+    graph.get_state.return_value = SimpleNamespace(values={}, next=())
     graph.invoke.return_value = {"messages": [AIMessage(content="Respuesta")], "customer_id": 1}
     build = MagicMock(return_value=graph)
     monkeypatch.setattr(main, "_build_decentralized_graph", build)
@@ -84,6 +85,7 @@ def test_runtime_database_failure_returns_503(monkeypatch):
     from psycopg import OperationalError
     storage = resources()
     graph = MagicMock()
+    graph.get_state.return_value = SimpleNamespace(values={}, next=())
     graph.invoke.side_effect = OperationalError("private details")
     monkeypatch.setattr(main, "_build_decentralized_graph", lambda saver: graph)
     app = main.create_app(session_guard=Guard(), checkpoint_resources_factory=lambda: storage,

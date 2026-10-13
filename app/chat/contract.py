@@ -10,7 +10,7 @@ class ChatIn(BaseModel):
 
     conversation_id: str | None = Field(default=None, max_length=64)
     message: str | None = Field(default=None, max_length=2000)
-    action: Literal["accept_quote", "reject_quote"] | None = None
+    action: Literal["accept_quote", "reject_quote", "resume_payment"] | None = None
     pattern: Literal["hierarchical", "orchestrator", "decentralized"] = "hierarchical"
 
     @model_validator(mode="after")

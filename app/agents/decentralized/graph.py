@@ -17,6 +17,14 @@ from app.agents.decentralized.ventas import ventas_node, ventas_tools
 from app.agents.decentralized.almacen import almacen_node, almacen_tools
 from app.agents.decentralized.software import software_node, software_tools
 from app.agents.decentralized.compras import compras_node, compras_tools
+from app.agents.decentralized.facturacion import facturacion_node, facturacion_tools
+from app.agents.decentralized.payment_operations import validate_pending_payment_operation
+from langgraph.runtime import Runtime
+from typing_extensions import TypedDict
+
+
+class FinancialContext(TypedDict, total=False):
+    authenticated_customer_id: int
 
 MAX_HANDOFFS = 5
 MAX_TOOL_ITERATIONS = 6
@@ -26,6 +34,7 @@ AGENT_NODES = {
     "ventas": ventas_node, "almacen": almacen_node,
     "software": software_node,
     "compras": compras_node,
+    "facturacion": facturacion_node,
 }
 
 
@@ -382,6 +391,10 @@ def auditar_compras(state: AgentState):
     return registrar_handoff(state, "compras")
 
 
+def auditar_facturacion(state: AgentState):
+    return registrar_handoff(state, "facturacion")
+
+
 def route_next_agent(state: AgentState):
     return state.get("next_agent") or "finalizar"
 
@@ -411,15 +424,46 @@ def preparar_turno(state: AgentState):
     }
 
 
-def build_graph(checkpointer=None):
+def build_graph(checkpointer=None, *, financial_repository=None):
     """Construye la misma red; el consumidor puede aportar su checkpointer.
 
     Sin checkpointer admite invoke(state) y el historial gestionado por Conversation.
     La API aporta MemorySaver y thread_id para conservar conversaciones.
     """
-    builder = StateGraph(AgentState)
+    if financial_repository is not None and checkpointer is None:
+        raise ValueError("Preparación financiera requiere checkpointer explícito")
+    builder = StateGraph(AgentState, context_schema=FinancialContext)
     for name, node in AGENT_NODES.items():
+        if name == "facturacion" and financial_repository is not None:
+            # Trusted invocation context is not checkpointed or model-generated.
+            def financial_entry(state: AgentState, runtime: Runtime[FinancialContext]):
+                return facturacion_node(state, repository=financial_repository,
+                    authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"))
+            node = financial_entry
         builder.add_node(name, node)
+
+    def preparar_pago(state: AgentState, runtime: Runtime[FinancialContext]):
+        pending = validate_pending_payment_operation(state.get("pending_payment_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        # A separate superstep records exactly the prepared operation. No LLM.
+        return {"pending_payment_operation": pending}
+
+    def ejecutar_pago(state: AgentState, runtime: Runtime[FinancialContext]):
+        validate_pending_payment_operation(state.get("pending_payment_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        return {"messages": [AIMessage(content="La operación pendiente fue recuperada. La escritura financiera continúa deshabilitada; no se ha registrado ni confirmado un pago.")]}
+
+    builder.add_node("preparar_pago", preparar_pago)
+    builder.add_node("ejecutar_pago", ejecutar_pago)
+    builder.add_edge("preparar_pago", "ejecutar_pago")
+    builder.add_edge("ejecutar_pago", END)
+
+    def financial_route(state):
+        if tools_condition(state) == "tools":
+            return "tools"
+        return "prepare" if financial_repository is not None and state.get("pending_payment_operation") else "__end__"
 
     for name, tools in (
         ("soporte", soporte_tools),
@@ -428,6 +472,7 @@ def build_graph(checkpointer=None):
         ("almacen", almacen_tools),
         ("software", software_tools),
         ("compras", compras_tools),
+        ("facturacion", facturacion_tools),
     ):
         builder.add_node(f"{name}_tools", ToolNode(tools, handle_tool_errors=True))
 
@@ -438,12 +483,17 @@ def build_graph(checkpointer=None):
     builder.add_node("auditar_almacen", auditar_almacen)
     builder.add_node("auditar_software", auditar_software)
     builder.add_node("auditar_compras", auditar_compras)
+    builder.add_node("auditar_facturacion", auditar_facturacion)
 
     builder.add_node("preparar_turno", preparar_turno)
     builder.add_edge(START, "preparar_turno")
     builder.add_conditional_edges("preparar_turno", route_entry,
                                   {name: name for name in AGENT_NODES})
     for agente in AGENT_NODES:
+        if agente == "facturacion":
+            builder.add_conditional_edges(agente, financial_route,
+                {"tools": "facturacion_tools", "prepare": "preparar_pago", "__end__": END})
+            continue
         builder.add_conditional_edges(
             agente,
             tools_condition,
@@ -457,6 +507,7 @@ def build_graph(checkpointer=None):
     builder.add_edge("guardar_inventario", "auditar_almacen")
     builder.add_edge("software_tools", "auditar_software")
     builder.add_edge("compras_tools", "auditar_compras")
+    builder.add_edge("facturacion_tools", "auditar_facturacion")
 
     rutas = {**{name: name for name in AGENT_NODES}, "finalizar": END}
     for auditor in (
@@ -464,10 +515,14 @@ def build_graph(checkpointer=None):
         "auditar_almacen", "auditar_ventas",
         "auditar_software",
         "auditar_compras",
+        "auditar_facturacion",
     ):
         builder.add_conditional_edges(auditor, route_next_agent, rutas)
 
-    return builder.compile(checkpointer=checkpointer)
+    # Static interrupt forces a saved checkpoint before the execution superstep.
+    # Resume requires a trusted caller using invoke(None, context=...) explicitly.
+    return builder.compile(checkpointer=checkpointer,
+        interrupt_before=["ejecutar_pago"] if financial_repository is not None else None)
 
 
 # Compatible con scripts y Conversation que invocan sin thread_id.

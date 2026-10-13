@@ -48,7 +48,10 @@ llm = ChatGroq(
 # HERRAMIENTAS
 # =========================================================
 
+from app.agents.decentralized.tools.facturacion_tools import transferir_a_facturacion
+
 ventas_tools = [
+    transferir_a_facturacion,
     solicitar_inventario,
     transferir_a_soporte,
     generar_cotizacion,

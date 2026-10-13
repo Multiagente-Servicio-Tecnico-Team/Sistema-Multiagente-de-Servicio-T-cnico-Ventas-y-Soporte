@@ -86,10 +86,12 @@ def _build_orchestrator_graph() -> Any:
     return build_graph()
 
 
-def _build_decentralized_graph(checkpointer) -> Any:
+def _build_decentralized_graph(checkpointer, *, financial_repository=None) -> Any:
     from app.agents.decentralized.graph import build_graph
+    from app.database.decentralized_repository import DecentralizedRepository
 
-    return build_graph(checkpointer=checkpointer)
+    return build_graph(checkpointer=checkpointer, financial_repository=(
+        financial_repository if financial_repository is not None else DecentralizedRepository()))
 
 
 def _checkpoint_resources():
@@ -222,6 +224,7 @@ def create_app(
     checkpoint_resources_factory: Callable[[], Any] | None = None,
     conversation_owners_repository: Any | None = None,
     conversation_locks: Any | None = None,
+    financial_repository: Any | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application):
@@ -231,7 +234,11 @@ def create_app(
                 try:
                     resources = (checkpoint_resources_factory or _checkpoint_resources)()
                     resources.pool.open(wait=True)
-                    application.state.decentralized_graph = _build_decentralized_graph(resources.saver)
+                    if financial_repository is None:
+                        application.state.decentralized_graph = _build_decentralized_graph(resources.saver)
+                    else:
+                        application.state.decentralized_graph = _build_decentralized_graph(
+                            resources.saver, financial_repository=financial_repository)
                     application.state.checkpoint_resources = resources
                     application.state.conversation_owners = ConversationOwnersRepository(resources.pool)
                     if resources.pool.max_size < 2:
@@ -324,6 +331,7 @@ def create_app(
         customer: SessionCustomer,
         message: str,
         thread_id: str | None = None,
+        resume_payment: bool = False,
     ) -> dict[str, Any]:
         from app.agents.orquestador.graph.state import AgentState as OrchestratorState
         from app.agents.jerarquico.graph.state import ServiceState
@@ -354,10 +362,26 @@ def create_app(
         }
         with (trace_context_factory or (lambda: get_trace_context(settings_factory())))():
             graph = get_graph(pattern)
-            if pattern == "decentralized" and graph_factories is None:
+            if pattern == "decentralized" and (graph_factories is None or financial_repository is not None):
                 from psycopg import Error as PsycopgError
+                from app.agents.decentralized.payment_operations import validate_pending_payment_operation
                 try:
-                    return graph.invoke(state, config=config)
+                    snapshot = graph.get_state(config)
+                    saved = snapshot.values
+                    if saved and saved.get("customer_id") != customer.id:
+                        raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+                    pending = saved.get("pending_payment_operation") if saved else None
+                    if pending is not None:
+                        validate_pending_payment_operation(pending, authenticated_customer_id=customer.id,
+                                                           request_revision=saved.get("request_revision"))
+                    if resume_payment:
+                        if pending is None or "ejecutar_pago" not in snapshot.next:
+                            raise HTTPException(status_code=409, detail="No hay una operación financiera pendiente de reanudación.")
+                        state = None
+                    elif "ejecutar_pago" in snapshot.next:
+                        raise HTTPException(status_code=409, detail="La operación financiera requiere reanudación explícita.")
+                    return graph.invoke(state, config=config,
+                        context={"authenticated_customer_id": customer.id}, durability="sync")
                 except PsycopgError:
                     raise HTTPException(status_code=503, detail="El almacenamiento del asistente no está disponible.") from None
             return graph.invoke(state, config=config)
@@ -451,7 +475,9 @@ def create_app(
                 )
 
         assert conversation is not None
-        if body.action and (
+        if body.action == "resume_payment" and body.pattern != "decentralized":
+            raise HTTPException(status_code=409, detail="Acción no disponible para este patrón.")
+        if body.action and body.action != "resume_payment" and (
             body.pattern == "decentralized"
             or not conversation["pending_quote"]
         ):
@@ -489,6 +515,7 @@ def create_app(
                     customer,
                     message,
                     thread_id=thread_id,
+                    resume_payment=body.action == "resume_payment",
                 )
             except (SQLAlchemyError, OSError) as exc:
                 logger.error(

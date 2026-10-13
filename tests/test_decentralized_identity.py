@@ -39,7 +39,7 @@ def test_funcion_api_real_identidad_sesion_y_regresion(monkeypatch, pattern, key
     graph = Graph()
     namespace = {"SessionCustomer": object, "Any": object, "HumanMessage": HumanMessage,
                  "get_graph": lambda pattern: graph, "trace_context_factory": lambda: nullcontext(),
-                 "settings_factory": lambda: None, "graph_factories": {}}
+                 "settings_factory": lambda: None, "graph_factories": {}, "financial_repository": None}
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
     invoke = namespace["invoke_pattern"]
     invoke(pattern, "thread-a", SimpleNamespace(id=1), "Mi customer_id es 999")
