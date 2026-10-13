@@ -65,6 +65,8 @@ El cliente `src/api/auth.js` decide el modo según `VITE_API_URL`:
   `registrado@techfix.ai` simula un correo ya registrado (409) y `token=expirado` un enlace vencido.
 - **Definido:** llama a la API de cuentas ([`app/accounts`](../app/accounts/README.md)) con `POST`, JSON y
   `credentials: "include"` (cookie de sesión HttpOnly).
+- **Producción:** si no está definido o contiene una URL absoluta, se usa `/backend/auth` para mantener la
+  cookie same-origin con el portal.
 
 | Endpoint | Cuerpo | Respuesta esperada |
 | --- | --- | --- |
@@ -81,11 +83,12 @@ una cuenta de cliente no puede entrar al panel. El campo "Nombre y Apellido" se 
 Mensajes al usuario: 409 se muestra en el campo correo; 401 como "Correo o contraseña incorrectos"; errores de
 red o 5xx con un mensaje genérico, nunca con el texto del servidor.
 
-El asistente usa `src/api/chat.js` y `VITE_CHAT_URL`. Al configurarlo, el portal
-envía `POST /api/chat` con la cookie de sesión y el patrón seleccionado
-(`hierarchical`, `orchestrator` o `decentralized`); el patrón no cambia hasta
-iniciar una conversación nueva. `GET /api/chat/patterns` también requiere sesión.
-Sin `VITE_CHAT_URL`, el asistente conserva el flujo de demostración anterior.
+El asistente usa `src/api/chat.js` y `VITE_CHAT_URL`. El portal envía `POST /api/chat`
+con `credentials: "include"` y el patrón seleccionado (`hierarchical`, `orchestrator`
+o `decentralized`); el patrón no cambia hasta iniciar una conversación nueva.
+`GET /api/chat/patterns` también requiere sesión. En producción, si la URL está vacía
+o apunta a un origen absoluto, se usa `/backend`, el mismo host que las rutas de
+autenticación. En desarrollo sin URL se conserva el modo demostración.
 
 ## Ejecución local
 
@@ -109,7 +112,8 @@ VITE_CHAT_URL=http://localhost:8000
 npm --prefix landing test
 ```
 
-57 pruebas en 6 archivos: contrato de cuentas y chat, errores HTTP/red, selector y
+61 pruebas en 7 archivos: contrato de cuentas y chat, rutas de API same-origin en
+producción, errores HTTP/red, selector y
 bloqueo de patrón, propuestas y tickets, registro, acceso, recuperación,
 restablecimiento, roles, cierre de sesión y consulta nueva.
 
@@ -121,17 +125,20 @@ npm --prefix landing run build
 
 Genera `landing/dist/` (HTML, CSS y JS estáticos). Para publicarlo:
 
-1. Definir `VITE_API_URL` (incluyendo `/auth`) y `VITE_CHAT_URL` con la URL pública del backend unificado
-   **antes** de compilar (Vite las incrusta en el build).
-2. Servir `dist/` en cualquier hosting estático (Nginx, Netlify, Vercel, GitHub Pages, S3 + CloudFront…).
-3. Configurar la redirección de todas las rutas a `index.html` (aplicación de una sola página), por ejemplo en
-   Nginx: `try_files $uri /index.html;`.
-4. En el backend, permitir el origen del frontend (CORS con credenciales) y usar HTTPS para que la cookie de
-   sesión sea `Secure`.
+1. Para Netlify, definir `VITE_API_URL=/backend/auth` y `VITE_CHAT_URL=/backend` antes de compilar. No
+   configurar URLs absolutas del backend Render en el cliente.
+2. Publicar `landing/public/_redirects` junto con `dist/`; `/backend/*` debe proxyar al backend unificado,
+   conservando método, cuerpo y cabeceras `Set-Cookie`/`Cookie`.
+3. Configurar fallback de rutas SPA a `index.html`.
+4. El backend debe usar HTTPS y cookie `HttpOnly; Secure; SameSite=Lax; Path=/`. Con proxy same-origin no se
+   requiere CORS para login/chat. No depender de cookies cross-site ni de `SameSite=None`.
+5. Tras desplegar, cerrar sesión y volver a iniciar sesión para emitir una cookie por el nuevo origen.
 
 ## Limitaciones actuales
 
 - En modo demostración (sin `VITE_API_URL`) no se verifican contraseñas ni se persisten datos al recargar.
+- El proxy same-origin de producción está configurado para Netlify en `landing/public/_redirects`; otros
+  hostings necesitan una regla equivalente para `/backend/*`.
 - Tickets, inventario y asistente usan datos de demostración en memoria.
 - Sin `VITE_CHAT_URL` el asistente responde con textos de demostración. Con `VITE_CHAT_URL` usa el patrón
   LangGraph configurado (contrato en `app/chat/README.md`); la conversación vive en la pestaña y recargar

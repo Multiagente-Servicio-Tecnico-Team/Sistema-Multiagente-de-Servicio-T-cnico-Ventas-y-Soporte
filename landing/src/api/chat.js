@@ -5,6 +5,7 @@
  *   (credentials: "include"). The body never carries the customer's email or id.
  * - Without VITE_CHAT_URL the assistant stays in demo mode.
  */
+import { resolveApiBaseUrl } from "./baseUrl.js";
 
 export class ChatError extends Error {
   constructor(message, { status = 0, code = "error" } = {}) {
@@ -74,15 +75,24 @@ export function createChatApi({ baseUrl = "", fetchImpl } = {}) {
   };
 }
 
-export const chatApi = createChatApi({ baseUrl: import.meta.env?.VITE_CHAT_URL ?? "" });
+export const chatApi = createChatApi({
+  baseUrl: resolveApiBaseUrl(
+    import.meta.env?.VITE_CHAT_URL ?? "",
+    "/backend",
+    import.meta.env?.PROD === true,
+  ),
+});
 
 /** Ticket statuses from the database script -> text for the customer. */
 export const TICKET_STATUS_LABEL = {
   NEW: "Recibido",
   IN_DIAGNOSIS: "En diagnóstico",
   QUOTED: "Presupuesto enviado",
+  PAYMENT_PENDING: "Pago pendiente",
   IN_REPAIR: "En reparación",
   READY_FOR_PICKUP: "Listo para retiro",
+  READY_FOR_DELIVERY: "Listo para despacho",
+  WARRANTY_IN_REVIEW: "Garantía en revisión",
   DELIVERED: "Entregado",
   CANCELLED: "Cancelado",
 };
