@@ -1,7 +1,7 @@
 """Authenticated chat API for selecting and tracing the LangGraph patterns."""
 
 import logging
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, asynccontextmanager
 from threading import Lock, RLock
 from typing import Any, Callable
 from uuid import uuid4
@@ -27,6 +27,10 @@ from app.accounts.session import (
 )
 from app.chat.contract import ChatIn, ChatOut, QuoteLine, QuoteOut, TicketOut
 from app.settings import Settings, load_settings
+from app.database.conversation_owners import (
+    ConversationOwnersRepository, ConversationNotFound, ConversationConflict,
+    ConversationStorageError,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -81,12 +85,15 @@ def _build_orchestrator_graph() -> Any:
     return build_graph()
 
 
-def _build_decentralized_graph() -> Any:
-    from langgraph.checkpoint.memory import MemorySaver
-
+def _build_decentralized_graph(checkpointer) -> Any:
     from app.agents.decentralized.graph import build_graph
 
-    return build_graph(checkpointer=MemorySaver())
+    return build_graph(checkpointer=checkpointer)
+
+
+def _checkpoint_resources():
+    from app.database.decentralized_checkpoint import load_checkpoint_settings, build_checkpoint_resources
+    return build_checkpoint_resources(load_checkpoint_settings())
 
 
 def _message_for_action(action: str | None, message: str | None) -> str:
@@ -211,8 +218,45 @@ def create_app(
     graph_factories: dict[str, GraphFactory] | None = None,
     settings_factory: Callable[[], Settings] = load_settings,
     trace_context_factory: Callable[[], AbstractContextManager[None]] | None = None,
+    checkpoint_resources_factory: Callable[[], Any] | None = None,
+    conversation_owners_repository: Any | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="TechFix.AI · Patrones LangGraph", version="1.1.0")
+    @asynccontextmanager
+    async def lifespan(application):
+        resources = None
+        try:
+            if graph_factories is None:
+                try:
+                    resources = (checkpoint_resources_factory or _checkpoint_resources)()
+                    resources.pool.open(wait=True)
+                    application.state.decentralized_graph = _build_decentralized_graph(resources.saver)
+                    application.state.checkpoint_resources = resources
+                    application.state.conversation_owners = ConversationOwnersRepository(resources.pool)
+                except Exception:
+                    logger.error("Decentralized checkpoint initialization failed")
+                    if resources is not None:
+                        try:
+                            resources.close()
+                        except Exception:
+                            logger.error("Decentralized checkpoint cleanup failed")
+                        resources = None
+                    application.state.decentralized_graph = None
+            yield
+        finally:
+            application.state.decentralized_graph = None
+            application.state.checkpoint_resources = None
+            application.state.conversation_owners = None
+            graph_cache.pop("decentralized", None)
+            if resources is not None:
+                try:
+                    resources.close()
+                except Exception:
+                    logger.error("Decentralized checkpoint shutdown failed")
+
+    app = FastAPI(title="TechFix.AI · Patrones LangGraph", version="1.1.0", lifespan=lifespan)
+    app.state.decentralized_graph = None
+    app.state.checkpoint_resources = None
+    app.state.conversation_owners = conversation_owners_repository
     account_settings = (
         session_guard.settings
         if session_guard is not None
@@ -237,7 +281,7 @@ def create_app(
     graph_builders = graph_factories or {
         "hierarchical": _build_hierarchical_graph,
         "orchestrator": _build_orchestrator_graph,
-        "decentralized": _build_decentralized_graph,
+        "decentralized": lambda: app.state.decentralized_graph,
     }
     if set(graph_builders) != set(PATTERN_NAMES):
         raise ValueError("Debe configurarse exactamente cada patrón disponible.")
@@ -258,6 +302,11 @@ def create_app(
 
     def get_graph(pattern: str) -> Any:
         with conversations_lock:
+            if pattern == "decentralized" and graph_factories is None:
+                graph = app.state.decentralized_graph
+                if graph is None:
+                    raise HTTPException(status_code=503, detail="El almacenamiento del asistente no está disponible.")
+                return graph
             if pattern not in graph_cache:
                 graph_cache[pattern] = graph_builders[pattern]()
             return graph_cache[pattern]
@@ -267,6 +316,7 @@ def create_app(
         conversation_id: str,
         customer: SessionCustomer,
         message: str,
+        thread_id: str | None = None,
     ) -> dict[str, Any]:
         from app.agents.orquestador.graph.state import AgentState as OrchestratorState
         from app.agents.jerarquico.graph.state import ServiceState
@@ -287,7 +337,7 @@ def create_app(
             state = DecentralizedState(messages=[human_message], customer_id=customer.id)
 
         config = {
-            "configurable": {"thread_id": conversation_id},
+            "configurable": {"thread_id": thread_id or conversation_id},
             "run_name": f"techfix-{pattern}",
             "tags": ["service-chat", f"pattern:{pattern}"],
             "metadata": {
@@ -296,7 +346,14 @@ def create_app(
             },
         }
         with (trace_context_factory or (lambda: get_trace_context(settings_factory())))():
-            return get_graph(pattern).invoke(state, config=config)
+            graph = get_graph(pattern)
+            if pattern == "decentralized" and graph_factories is None:
+                from psycopg import Error as PsycopgError
+                try:
+                    return graph.invoke(state, config=config)
+                except PsycopgError:
+                    raise HTTPException(status_code=503, detail="El almacenamiento del asistente no está disponible.") from None
+            return graph.invoke(state, config=config)
 
     @app.get("/api/chat/patterns")
     def patterns(_customer: SessionCustomer = Depends(require_customer)):
@@ -322,9 +379,46 @@ def create_app(
 
         is_new = body.conversation_id is None
         conversation_id = body.conversation_id or str(uuid4())
+        thread_id = conversation_id
+        if body.pattern == "decentralized":
+            # Memory holds only a local lock, never ownership authority.
+            repository = conversation_owners_repository or app.state.conversation_owners
+            if repository is None:
+                raise HTTPException(status_code=503, detail="El almacenamiento del asistente no está disponible.")
+            with conversations_lock:
+                local = conversations.get(conversation_id)
+                if local and local["pattern"] != body.pattern and local["customer_id"] == customer.id:
+                    return JSONResponse(status_code=409, content={"detail": "Para cambiar de patrón, inicia una conversación nueva.", "code": "pattern_locked"})
+            try:
+                if is_new:
+                    owner = repository.register(conversation_id=conversation_id, thread_id=conversation_id,
+                                                authenticated_customer_id=customer.id)
+                else:
+                    owner = repository.authorize(conversation_id=conversation_id,
+                                                 authenticated_customer_id=customer.id)
+                thread_id = owner["thread_id"]
+            except ConversationNotFound:
+                return JSONResponse(status_code=404, content={"detail": "Conversación no encontrada.", "code": "not_found"})
+            except ConversationConflict:
+                return JSONResponse(status_code=409, content={"detail": "Para cambiar de patrón, inicia una conversación nueva.", "code": "pattern_locked"})
+            except ConversationStorageError:
+                raise HTTPException(status_code=503, detail="El almacenamiento del asistente no está disponible.") from None
         with conversations_lock:
             conversation = conversations.get(conversation_id)
-            if is_new:
+            if (not is_new and conversation is None and body.pattern != "decentralized"
+                    and (conversation_owners_repository or app.state.conversation_owners) is not None):
+                try:
+                    (conversation_owners_repository or app.state.conversation_owners).authorize(
+                        conversation_id=conversation_id, authenticated_customer_id=customer.id)
+                except ConversationNotFound:
+                    pass
+                except ConversationConflict:
+                    return JSONResponse(status_code=409, content={"detail": "Para cambiar de patrón, inicia una conversación nueva.", "code": "pattern_locked"})
+                except ConversationStorageError:
+                    raise HTTPException(status_code=503, detail="El almacenamiento del asistente no está disponible.") from None
+                else:
+                    return JSONResponse(status_code=409, content={"detail": "Para cambiar de patrón, inicia una conversación nueva.", "code": "pattern_locked"})
+            if is_new or (body.pattern == "decentralized" and conversation is None):
                 conversation = {
                     "customer_id": customer.id,
                     "pattern": body.pattern,
@@ -370,6 +464,7 @@ def create_app(
                     conversation_id,
                     customer,
                     message,
+                    thread_id=thread_id,
                 )
             except (SQLAlchemyError, OSError) as exc:
                 logger.error(
