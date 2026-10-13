@@ -39,6 +39,31 @@
 - [x] Verificar acceso a proyectos de LangSmith.
 - [x] Verificar PostgreSQL e inspeccionar tablas/columnas sin leer datos de usuarios.
 
+## Patron jerarquico — ventas (checkpoint de commit pendiente)
+- [x] Implementar la ruta comercial y subagentes para FAQ, ventas, pagos, garantía, soporte HW/SW, almacén, compras y logística.
+- [x] Añadir consultas de catálogo y garantía parametrizadas; no se permite SQL generado por LLM.
+- [x] Crear tickets `NEW` durante el triage de ventas y servicio; actualizar el mismo ticket con diagnóstico y estado `IN_DIAGNOSIS`.
+- [x] Registrar cotización `ACCEPTED`, pago `PENDING` y estado final `PAYMENT_PENDING` en una transacción tras aceptación explícita; cancelar el ticket si se rechaza.
+- [x] Alinear persistencia del diagnóstico con `hardware_diagnosis` y `software_diagnosis`, y la tarifa predeterminada de mantenimiento con S/ 35.00 del prompt.
+- [x] Verificar que la BD local contiene las tres columnas de diagnóstico; no se hicieron escrituras reales.
+- [x] Ejecutar suite aislada ampliada tras corregir el ciclo de tickets de servicio: 60 pruebas aprobadas.
+- Limitaciones reales: el esquema no define compatibilidad de PC ni ofertas relacionadas con proveedores; no se reserva stock ni se afirma pago/entrega completados.
+- Commit del usuario: ____________________
+
+## Patron jerarquico — trazabilidad (checkpoint de commit pendiente)
+- [x] Correlacionar nodos y herramientas por UUID aleatorio de ejecución.
+- [x] Registrar solo timestamp, identificador de ejecución, componente, tipo y evento; excluir mensajes, identidad, entradas/resultados y texto de excepciones.
+- [x] Probar eventos exitosos y de error, correlación y ausencia de datos privados.
+- Limitación: JSONL local por proceso; despliegue horizontal requiere un backend compartido y política de retención.
+- Commit del usuario: ____________________
+
+## Chat autenticado — corregido al final; smoke test de despliegue pendiente
+- [x] Corregir bases de URL de producción para login y chat: ambas usan rutas same-origin `/backend/*`, incluso si la build recibe una URL absoluta.
+- [x] Confirmar `credentials: include` en login/chat con pruebas de contrato existentes; nuevas pruebas validan rutas same-origin de producción.
+- [x] Vitest: 61 pruebas aprobadas; build Vite exitoso y `dist/_redirects` presente.
+- [ ] Tras publicar, confirmar en dominio Netlify real `Set-Cookie` y el envío de `Cookie` en `POST /backend/api/chat`; no se realizó deploy en esta sesión.
+- Commit del usuario: ____________________
+
 ## Ejecucion
 - Instalar dependencias: `pip install -r requirements.txt`.
 - Configurar claves Groq/LangSmith y `DATABASE_URL` en `.env`.
@@ -48,8 +73,8 @@
 ## Esquema confirmado
 - La tabla `users` autentica por `email` y solo admite cuentas con `active = true`.
 - El inventario es `spare_parts`; usa `name`, `current_stock`, `unit_price` y `active`.
-- Los tickets se guardan en `tickets` con `customer_id`, `code`, `title`, `failure_description` y `provisional_diagnosis`.
-- Los presupuestos se guardan en `quotes` y `quote_details`; los tickets pasan a `IN_DIAGNOSIS` y `QUOTED`.
+- Los tickets usan `customer_id`, `code`, `title`, `failure_description`, `diagnosis_type`, `hardware_diagnosis` y `software_diagnosis`; el antiguo `provisional_diagnosis` no es requisito del esquema vigente.
+- Los presupuestos se guardan en `quotes` y `quote_details`; el flujo jerárquico crea el ticket en `NEW`, lo actualiza a `IN_DIAGNOSIS` al guardar el diagnóstico y concluye en `PAYMENT_PENDING` al aceptar una cotización y registrar el pago `PENDING`.
 - Las tablas de conversaciones creadas por versiones anteriores no se eliminan ni se modifican; esta version deja de escribir en ellas.
 - El catalogo RAG se administra en `app/agents/orquestador/knowledge/`; la recuperacion es local por ranking BM25.
 - La moneda configurada es PEN y se presenta como `S/`.
