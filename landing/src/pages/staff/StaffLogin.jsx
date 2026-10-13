@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { LoginForm } from "../portal/Login.jsx";
 
-/** Pantalla creada para el personal: los diseños solo incluían el acceso del cliente. */
+/** Added screen for the staff: the designs only included the customer sign-in. */
 export default function StaffLogin() {
   return (
     <LoginForm

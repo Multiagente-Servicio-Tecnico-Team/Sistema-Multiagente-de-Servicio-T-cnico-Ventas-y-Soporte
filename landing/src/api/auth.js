@@ -1,12 +1,13 @@
 /*
- * Cliente de autenticación del portal.
+ * Portal authentication client.
  *
- * - Con VITE_API_URL definido llama al backend: POST /registro, /login, /recuperar y /restablecer.
- * - Sin VITE_API_URL usa un simulador local para trabajar el frontend sin servidor.
+ * - With VITE_API_URL set it calls the backend: POST /registro, /login, /recuperar and /restablecer.
+ * - Without VITE_API_URL it uses a local simulator to work on the frontend without a server.
  *
- * Reglas: la contraseña solo viaja en el cuerpo de la petición (HTTPS en producción); el hash
- * lo genera el backend. El frontend nunca guarda contraseñas ni tokens: la sesión del servidor
- * debe viajar en una cookie HttpOnly (por eso credentials: "include").
+ * Rules: the password only travels in the request body (HTTPS in production); the backend
+ * creates the hash. The frontend never stores passwords or tokens: the server session
+ * travels in an HttpOnly cookie (hence credentials: "include").
+ * The JSON keys (nombre, apellido, telefono, usuario, rol) are the backend contract.
  */
 
 export class ApiError extends Error {
@@ -34,25 +35,25 @@ export function normalizeEmail(email) {
   return String(email).trim().toLowerCase();
 }
 
-/** "+51" + "987 654 321" -> "+51987654321" (formato E.164). */
+/** "+51" + "987 654 321" -> "+51987654321" (E.164 format). */
 export function toE164(prefix, phone) {
   return `${prefix}${String(phone).replace(/\D/g, "")}`;
 }
 
-/** "Martín Gómez Ruiz" -> { nombre: "Martín", apellido: "Gómez Ruiz" } (columnas name y last_name). */
+/** "Martín Gómez Ruiz" -> { firstName: "Martín", lastName: "Gómez Ruiz" } (name and last_name columns). */
 export function splitFullName(full) {
   const clean = String(full).trim().split(/\s+/).filter(Boolean);
-  return { nombre: clean[0] || "", apellido: clean.slice(1).join(" ") || undefined };
+  return { firstName: clean[0] || "", lastName: clean.slice(1).join(" ") || undefined };
 }
 
-export function fullName(usuario) {
-  return [usuario?.nombre, usuario?.apellido].filter(Boolean).join(" ");
+export function fullName(user) {
+  return [user?.nombre, user?.apellido].filter(Boolean).join(" ");
 }
 
-/** Rol de la tabla users -> área del frontend. Sin rol (modo demostración) se usa el área de la pantalla. */
-export function areaForRole(rol, fallback) {
-  if (rol === "CUSTOMER") return "client";
-  if (rol === "TECHNICIAN" || rol === "ADMIN") return "staff";
+/** Role from the users table -> frontend area. Without a role (demo mode) the screen area is used. */
+export function areaForRole(role, fallback) {
+  if (role === "CUSTOMER") return "client";
+  if (role === "TECHNICIAN" || role === "ADMIN") return "staff";
   return fallback;
 }
 
@@ -104,8 +105,8 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
   if (base) {
     return {
       mode: "api",
-      async register({ nombre, apellido, email, telefono, password }) {
-        const body = { nombre: nombre.trim(), apellido: apellido?.trim() || undefined, email: normalizeEmail(email), telefono, password };
+      async register({ firstName, lastName, email, phone, password }) {
+        const body = { nombre: firstName.trim(), apellido: lastName?.trim() || undefined, email: normalizeEmail(email), telefono: phone, password };
         const data = await post("/registro", body);
         return data.usuario ?? { nombre: body.nombre, apellido: body.apellido ?? null, email: body.email };
       },
@@ -121,27 +122,27 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
         await post("/restablecer", { token, password });
         return { ok: true };
       },
-      // Borra la cookie de sesión del servidor; un fallo de red no debe impedir salir en el navegador.
+      // Clears the server session cookie; a network failure must not prevent signing out in the browser.
       async logout() {
         try {
           await post("/logout", {});
         } catch {
-          /* la sesión local se cierra igual */
+          /* the local session is closed anyway */
         }
       },
     };
   }
 
-  // Simulador: guarda solo correos registrados (nunca contraseñas) para mostrar el caso 409.
+  // Simulator: keeps only registered emails (never passwords) to show the 409 case.
   const registered = new Set(["registrado@techfix.ai"]);
   return {
     mode: "mock",
-    async register({ nombre, apellido, email }) {
+    async register({ firstName, lastName, email }) {
       await wait(delay);
       const mail = normalizeEmail(email);
       if (registered.has(mail)) throw new ApiError(MESSAGES.duplicateEmail, { status: 409, field: "email", code: "duplicate_email" });
       registered.add(mail);
-      return { nombre: nombre.trim(), apellido: apellido?.trim() || null, email: mail };
+      return { nombre: firstName.trim(), apellido: lastName?.trim() || null, email: mail };
     },
     async logout() {},
     async login({ email }) {
@@ -153,7 +154,7 @@ export function createAuthApi({ baseUrl = "", fetchImpl, delay = 450 } = {}) {
       await wait(delay);
       return { ok: true };
     },
-    // El token "expirado" permite ver el estado de enlace inválido sin backend.
+    // The "expirado" token shows the invalid link state without a backend.
     async resetPassword({ token }) {
       await wait(delay);
       if (!token || token === "expirado") throw new ApiError(MESSAGES.invalidToken, { status: 410, code: "invalid_token" });
