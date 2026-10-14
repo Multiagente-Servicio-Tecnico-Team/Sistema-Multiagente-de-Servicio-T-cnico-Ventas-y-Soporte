@@ -117,6 +117,22 @@ describe("connected assistant", () => {
     expect(selector).toHaveValue("orchestrator");
   });
 
+  it("shows the agent's bold text without asterisks or HTML", async () => {
+    const api = {
+      mode: "api",
+      sendMessage: vi.fn().mockResolvedValue({ conversation_id: "c1", reply: "Responde **Sí, confirmo** o **No**.\nTotal: <b>S/ 50.00</b>" }),
+    };
+    const user = userEvent.setup();
+    renderChat(api);
+    await write(user, "Mi laptop no detecta el SSD");
+
+    const bold = await screen.findByText("Sí, confirmo");
+    expect(bold.tagName).toBe("STRONG");
+    expect(screen.getByText("No").tagName).toBe("STRONG");
+    expect(bold.closest(".msg__bubble").textContent).toBe("Responde Sí, confirmo o No.\nTotal: <b>S/ 50.00</b>");
+    expect(bold.closest(".msg__bubble").querySelector("b")).toBeNull();
+  });
+
   it("goes to sign-in when the session ended", async () => {
     const api = { mode: "api", sendMessage: vi.fn().mockRejectedValue(new ChatError(CHAT_MESSAGES.session, { status: 401, code: "session_required" })) };
     const user = userEvent.setup();

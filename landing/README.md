@@ -84,7 +84,7 @@ El cliente `src/api/auth.js` decide el modo según `VITE_API_URL`:
 
 | Endpoint | Cuerpo | Respuesta esperada |
 | --- | --- | --- |
-| `/registro` | `{ nombre, apellido, email, telefono, password }` | `201 { usuario }` · `409` correo duplicado · `422` datos inválidos |
+| `/registro` | `{ nombre, apellido, email, telefono, password }` | `201 { usuario }` + cookie · `409` correo duplicado · `422` datos inválidos |
 | `/login` | `{ email, password }` | `200 { usuario }` + cookie · `401` credenciales · `429` intentos |
 | `/logout` | — | `204` y borra la cookie |
 | `/recuperar` | `{ email }` | `200` siempre; si la cuenta existe envía el enlace `/portal/restablecer?token=…` por correo |
@@ -126,7 +126,7 @@ VITE_CHAT_URL=http://localhost:8000
 npm --prefix landing test
 ```
 
-61 pruebas en 7 archivos: contrato de cuentas y chat, rutas de API same-origin en
+62 pruebas en 7 archivos: contrato de cuentas y chat, rutas de API same-origin en
 producción, errores HTTP/red, selector y
 bloqueo de patrón, propuestas y tickets, registro, acceso, recuperación,
 restablecimiento, roles, cierre de sesión y consulta nueva.
