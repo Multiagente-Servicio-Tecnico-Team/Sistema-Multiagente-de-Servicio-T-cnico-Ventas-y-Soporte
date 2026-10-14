@@ -1,3 +1,3 @@
-from app.agents.orquestador.knowledge.retriever import retrieve_technical_knowledge
+from .retriever import retrieve_technical_knowledge, retrieve_faq
 
-__all__ = ["retrieve_technical_knowledge"]
+__all__ = ["retrieve_technical_knowledge", "retrieve_faq"]

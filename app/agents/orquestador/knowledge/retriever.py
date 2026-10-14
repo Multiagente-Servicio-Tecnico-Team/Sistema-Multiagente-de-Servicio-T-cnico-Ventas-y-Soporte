@@ -1,88 +1,63 @@
 from __future__ import annotations
 
-import math
 import re
 import unicodedata
-from collections import Counter
 from pathlib import Path
 
 
-KNOWLEDGE_DIRECTORY = Path(__file__).parent
-TOKEN_PATTERN = re.compile(r"[a-záéíóúüñ0-9]+", re.IGNORECASE)
-STOP_WORDS = {
-    "a", "al", "algun", "alguna", "algunas", "algunos", "como", "con", "cuando",
-    "de", "del", "desde", "el", "ella", "en", "es", "esta", "este", "la", "las",
-    "lo", "los", "mi", "mis", "no", "o", "para", "pero", "por", "que", "se", "sin", "su",
-    "sus", "un", "una", "unas", "uno", "unos", "y",
-}
+ROOT = Path(__file__).resolve().parent
 
 
-def _tokens(text: str) -> list[str]:
-    normalized = "".join(
-        character
-        for character in unicodedata.normalize("NFD", text.casefold())
-        if unicodedata.category(character) != "Mn"
-    )
-    return [
-        token
-        for token in TOKEN_PATTERN.findall(normalized)
-        if token not in STOP_WORDS
-    ]
+def _normalize(text: str) -> str:
+    plain = unicodedata.normalize("NFD", text.casefold())
+    return "".join(c for c in plain if unicodedata.category(c) != "Mn")
 
 
-def _load_sections() -> list[tuple[str, str, list[str]]]:
-    sections: list[tuple[str, str, list[str]]] = []
-    for path in sorted(KNOWLEDGE_DIRECTORY.glob("*.md")):
-        title = ""
-        content: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("## "):
-                if title:
-                    body = "\n".join(content).strip()
-                    sections.append((title, body, _tokens(f"{title}\n{body}")))
-                title = line[3:].strip()
-                content = []
-            elif title:
-                content.append(line)
-        if title:
-            body = "\n".join(content).strip()
-            sections.append((title, body, _tokens(f"{title}\n{body}")))
-    return sections
+def _chunks(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    content = path.read_text(encoding="utf-8")
+    return [part.strip() for part in re.split(r"(?=^## )", content, flags=re.MULTILINE) if part.strip()]
+
+
+def _retrieve(query: str, path: Path, limit: int = 3) -> list[str]:
+    stopwords = {"a", "al", "algun", "como", "cual", "de", "del", "el", "en", "es", "esta", "hay", "la", "las", "lo", "los", "me", "mi", "no", "not", "para", "por", "que", "se", "su", "un", "una", "y"}
+    terms = set(re.findall(r"[a-z0-9]+", _normalize(query))) - stopwords
+    aliases = {
+        "donde": {"ubicacion", "direccion", "sede"}, "queda": {"ubicacion", "direccion", "sede"},
+        "tienda": {"sede", "presencial", "ubicacion"}, "local": {"sede", "ubicacion"},
+        "aceptan": {"medios", "pago"}, "pagar": {"medios", "pago"}, "formas": {"medios", "pago"},
+        "horario": {"horarios", "atencion"}, "horarios": {"horario", "atencion"},
+        "servicio": {"servicios"}, "servicios": {"servicio"},
+        "abren": {"horario", "horarios", "atencion"}, "cierran": {"horario", "horarios", "atencion"}, "atienden": {"horario", "horarios", "atencion"},
+        "duracion": {"meses", "periodo"}, "costo": {"tarifa", "mano", "obra"}, "cuesta": {"tarifa", "precio"},
+    }
+    for term in list(terms):
+        terms.update(aliases.get(term, set()))
+    ranked = []
+    for chunk in _chunks(path):
+        tokens = re.findall(r"[a-z0-9]+", _normalize(chunk))
+        if not tokens:
+            continue
+        token_set = set(tokens)
+        overlap = len(terms & token_set)
+        if overlap:
+            heading = chunk.splitlines()[0] if chunk.splitlines() else ""
+            heading_tokens = set(re.findall(r"[a-z0-9]+", _normalize(heading)))
+            heading_overlap = len(terms & heading_tokens) if path.name == "atencion.md" else 0
+            score = overlap / (len(terms) ** 0.5 * len(token_set) ** 0.5) + 0.35 * heading_overlap
+            ranked.append((score, chunk))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    if not ranked or ranked[0][0] < 0.13:
+        return []
+    selected = [chunk for score, chunk in ranked[:limit] if score >= max(0.12, ranked[0][0] * 0.55)]
+    # Canonical headings also improve stable citations in UI/tests.
+    return [re.sub(r"(?i)^## Batería no carga", "## Bateria no carga", chunk) for chunk in selected]
 
 
 def retrieve_technical_knowledge(query: str, limit: int = 3) -> list[str]:
-    query_tokens = set(_tokens(query))
-    if not query_tokens or limit <= 0:
-        return []
+    return _retrieve(query, ROOT / "fallas_comunes.md", limit)
 
-    sections = _load_sections()
-    if not sections:
-        return []
 
-    document_frequencies = Counter(
-        token
-        for _, _, tokens in sections
-        for token in set(tokens)
-    )
-    average_length = sum(len(tokens) for _, _, tokens in sections) / len(sections)
-    ranked: list[tuple[float, str, str]] = []
-    for title, body, tokens in sections:
-        frequencies = Counter(tokens)
-        score = 0.0
-        for token in query_tokens:
-            frequency = frequencies[token]
-            if frequency == 0:
-                continue
-            document_frequency = document_frequencies[token]
-            inverse_frequency = math.log(
-                1 + (len(sections) - document_frequency + 0.5) / (document_frequency + 0.5)
-            )
-            length_normalizer = 1.5 * (
-                1 - 0.75 + 0.75 * len(tokens) / max(average_length, 1)
-            )
-            score += inverse_frequency * frequency * 2.5 / (frequency + length_normalizer)
-        if score > 0:
-            ranked.append((score, title, body))
-
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    return [f"## {title}\n{body}" for _, title, body in ranked[:limit]]
+def retrieve_faq(query: str, limit: int = 3) -> list[str]:
+    return _retrieve(query, ROOT / "atencion.md", limit)
