@@ -102,3 +102,67 @@ def test_injected_graphs_do_not_open_storage():
                           checkpoint_resources_factory=factory)
     with TestClient(app):
         factory.assert_not_called()
+
+
+@pytest.mark.parametrize("stage", ["configuration", "pool_construction", "pool_open", "graph_construction", "resource_association"])
+def test_safe_initialization_stage_diagnostics(monkeypatch, caplog, stage):
+    import app.database.decentralized_checkpoint as checkpoint
+    storage = resources()
+    secret_message = "private DSN password must not appear"
+    failure = RuntimeError(secret_message)
+    monkeypatch.setattr(checkpoint, "load_checkpoint_settings", lambda: object())
+    monkeypatch.setattr(main, "_checkpoint_resources", lambda settings: storage)
+    monkeypatch.setattr(main, "_build_decentralized_graph", lambda saver: MagicMock())
+    if stage == "configuration":
+        monkeypatch.setattr(checkpoint, "load_checkpoint_settings", MagicMock(side_effect=failure))
+    elif stage == "pool_construction":
+        monkeypatch.setattr(main, "_checkpoint_resources", MagicMock(side_effect=failure))
+    elif stage == "pool_open":
+        storage.pool.open.side_effect = failure
+    elif stage == "graph_construction":
+        monkeypatch.setattr(main, "_build_decentralized_graph", MagicMock(side_effect=failure))
+    else:
+        monkeypatch.setattr(main, "ConversationOwnersRepository", MagicMock(side_effect=failure))
+    app = main.create_app(session_guard=Guard(), trace_context_factory=nullcontext)
+    with TestClient(app) as client:
+        assert client.get("/openapi.json").status_code == 200
+        assert client.post("/api/chat", json={"pattern": "decentralized", "message": "Hola"}).status_code == 503
+    assert f"stage={stage}; type=RuntimeError" in caplog.text
+    assert secret_message not in caplog.text
+    assert storage.close.call_count == (0 if stage in {"configuration", "pool_construction"} else 1)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_explicit_project_env_loaded_before_accounts_and_storage(monkeypatch, tmp_path, caplog, existing):
+    import os
+    import app.database.decentralized_checkpoint as checkpoint
+    from app.accounts.config import Settings as AccountSettings
+    secret = "synthetic-secret-for-isolated-test-" * 2
+    external = "external-secret-for-isolated-test-" * 2
+    (tmp_path / ".env").write_text(
+        f"AUTH_SECRET={secret}\nDECENTRALIZED_CHECKPOINT_DSN=postgresql://localhost/isolated_test\nLANGSMITH_PROJECT=taller-red-descentralizada\n",
+        encoding="utf-8")
+    monkeypatch.setattr(main, "PROJECT_ROOT", tmp_path)
+    for key in ("AUTH_SECRET", "DECENTRALIZED_CHECKPOINT_DSN", "LANGSMITH_PROJECT"):
+        monkeypatch.delenv(key, raising=False)
+    if existing:
+        monkeypatch.setenv("AUTH_SECRET", external)
+    expected = external if existing else secret
+    original = AccountSettings.from_env
+    def account_settings():
+        result = original()
+        assert result.auth_secret == expected
+        return result
+    monkeypatch.setattr(main.AccountSettings, "from_env", account_settings)
+    storage = resources()
+    def load_settings():
+        assert os.environ["AUTH_SECRET"] == expected
+        assert os.environ["LANGSMITH_PROJECT"] == "taller-red-descentralizada"
+        return checkpoint.CheckpointSettings(dsn=os.environ["DECENTRALIZED_CHECKPOINT_DSN"])
+    monkeypatch.setattr(checkpoint, "load_checkpoint_settings", load_settings)
+    monkeypatch.setattr(main, "_checkpoint_resources", lambda settings: storage)
+    monkeypatch.setattr(main, "_build_decentralized_graph", lambda saver: MagicMock())
+    app = main.create_app(trace_context_factory=nullcontext)
+    with TestClient(app):
+        assert original().auth_secret == expected
+    assert "se usa un secreto temporal" not in caplog.text

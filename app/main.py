@@ -5,6 +5,9 @@ from contextlib import AbstractContextManager, nullcontext, asynccontextmanager
 from threading import Lock, RLock
 from typing import Any, Callable
 from uuid import uuid4
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -35,6 +38,7 @@ from app.database.conversation_locks import ConversationLocks, ConversationBusy,
 
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PATTERN_NAMES = {
     "hierarchical": "Jerárquico",
     "orchestrator": "Orquestador / supervisor",
@@ -94,9 +98,9 @@ def _build_decentralized_graph(checkpointer, *, financial_repository=None) -> An
         financial_repository if financial_repository is not None else DecentralizedRepository()))
 
 
-def _checkpoint_resources():
-    from app.database.decentralized_checkpoint import load_checkpoint_settings, build_checkpoint_resources
-    return build_checkpoint_resources(load_checkpoint_settings())
+def _checkpoint_resources(settings):
+    from app.database.decentralized_checkpoint import build_checkpoint_resources
+    return build_checkpoint_resources(settings)
 
 
 def _message_for_action(action: str | None, message: str | None) -> str:
@@ -226,26 +230,42 @@ def create_app(
     conversation_locks: Any | None = None,
     financial_repository: Any | None = None,
 ) -> FastAPI:
+    # Read the project file before account settings or technical resources.
+    # Externally supplied configuration remains authoritative.
+    load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
+
     @asynccontextmanager
     async def lifespan(application):
         resources = None
         try:
             if graph_factories is None:
+                stage = "configuration"
                 try:
-                    resources = (checkpoint_resources_factory or _checkpoint_resources)()
+                    if checkpoint_resources_factory is None:
+                        from app.database.decentralized_checkpoint import load_checkpoint_settings
+                        checkpoint_settings = load_checkpoint_settings()
+                        stage = "pool_construction"
+                        resources = _checkpoint_resources(checkpoint_settings)
+                    else:
+                        stage = "pool_construction"
+                        resources = checkpoint_resources_factory()
+                    stage = "pool_open"
                     resources.pool.open(wait=True)
+                    stage = "graph_construction"
                     if financial_repository is None:
                         application.state.decentralized_graph = _build_decentralized_graph(resources.saver)
                     else:
                         application.state.decentralized_graph = _build_decentralized_graph(
                             resources.saver, financial_repository=financial_repository)
+                    stage = "resource_association"
                     application.state.checkpoint_resources = resources
                     application.state.conversation_owners = ConversationOwnersRepository(resources.pool)
                     if resources.pool.max_size < 2:
                         raise RuntimeError("Pool requiere capacidad para coordinación y saver")
                     application.state.conversation_locks = ConversationLocks(resources.pool)
-                except Exception:
-                    logger.error("Decentralized checkpoint initialization failed")
+                except Exception as exc:
+                    logger.error("Decentralized checkpoint initialization failed; stage=%s; type=%s",
+                                 stage, type(exc).__name__)
                     if resources is not None:
                         try:
                             resources.close()
