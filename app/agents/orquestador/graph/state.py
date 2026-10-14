@@ -1,53 +1,67 @@
-from decimal import Decimal
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
-from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
-from pydantic import BaseModel, Field
 
 
 class AgentState(TypedDict, total=False):
-    messages: Annotated[list[AnyMessage], add_messages]
-    user_id: object
-    ticket_id: int
-    category: str
+    messages: Annotated[list, add_messages]
+    current_message: str
+    thread_id: str
+    user_id: int
+    intent: str
+    request_type: str
+    support_domain: str
     product: str
     symptoms: str
-    awaiting_clarification: bool
-    clarification: str
-    awaiting_ticket_confirmation: bool
-    ticket_confirmed: bool
+    category: str
+    ticket_id: int
+    ticket_code: str
     diagnosis: str
-    labor_cost: Decimal
-    requested_parts: list[dict[str, object]]
-    inventory: list[dict[str, object]]
-    available_parts: list[dict[str, object]]
-    parts_total: Decimal
+    labor_cost: Any
+    requested_items: list[dict]
+    inventory: list[dict]
+    selected_items: list[dict]
+    quote_type: str
+    parts_total: Any
+    total: Any
     quote_id: int
-    quote_preview_ready: bool
-    ticket_cancelled: bool
-    total: Decimal
+    payment_id: int
+    payment_code: str
+    phase: str
     response: str
+    awaiting_input: bool
+    awaiting_clarification: bool
+    awaiting_ticket_confirmation: bool
+    ticket_cancelled: bool
+    next_agent: str
+    warranty_code: str
+    warranty_issued: bool
+    logistics_mode: str
+    pending_item_index: int
+    budget: Any
+    pending_options: list[dict]
+    pending_quantity: int
+    pending_description: str
+    logistics_id: int
+    customer_id: int
+    ticket_confirmed: bool
+    diagnostic_confirmed: bool
+    faq_context: str
+    warranty_id: int
+    claim_ticket_id: int
+    claim_reason: str
+    price_inquiry: bool
+
+
+from pydantic import BaseModel, Field
 
 
 class IntakeResult(BaseModel):
-    category: str = Field(description="Tipo de solicitud, redactado en español")
-    product: str = Field(description="Equipo, marca y modelo; texto en español excepto nombres propios")
-    symptoms: str = Field(description="Síntomas descritos en español, breves y fieles al usuario")
-    needs_clarification: bool = Field(
-        description="True si falta información esencial para un diagnóstico inicial"
-    )
-    clarification_question: str = Field(
-        description="Una pregunta concreta cuando hace falta aclarar; vacío en otro caso"
-    )
-
-
-class PartRequest(BaseModel):
-    name: str = Field(description="Nombre específico del repuesto")
-    quantity: int = Field(default=1, ge=1)
-
-
-class TechnicalDiagnosis(BaseModel):
-    diagnosis: str = Field(description="Diagnóstico técnico provisional y sus límites")
-    labor_cost: Decimal = Field(ge=0, description="Costo estimado de mano de obra")
-    parts: list[PartRequest] = Field(default_factory=list)
+    intent: str
+    category: str = ""
+    product: str = ""
+    symptoms: str = ""
+    support_domain: str = "NONE"
+    clarification: str = ""
+    requested_items: list[dict] = Field(default_factory=list)
+    budget: float | None = None
