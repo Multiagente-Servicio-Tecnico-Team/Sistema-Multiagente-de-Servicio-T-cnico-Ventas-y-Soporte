@@ -1,4 +1,7 @@
 import json
+from app.agents.decentralized.garantia import garantia_node, garantia_tools
+from app.agents.decentralized.warranty_operations import validate_pending_warranty_operation
+from app.agents.decentralized.policy import handoff
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
@@ -38,6 +41,7 @@ AGENT_NODES = {
     "compras": compras_node,
     "facturacion": facturacion_node,
     "logistica": logistica_node,
+    "garantia": garantia_node,
 }
 
 
@@ -441,6 +445,11 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         raise ValueError("Preparación financiera requiere checkpointer explícito")
     builder = StateGraph(AgentState, context_schema=FinancialContext)
     for name, node in AGENT_NODES.items():
+        if name == "garantia" and financial_repository is not None:
+            def warranty_entry(state: AgentState, runtime: Runtime[FinancialContext]):
+                return garantia_node(state, repository=financial_repository,
+                    authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"))
+            node = warranty_entry
         if name == "logistica" and financial_repository is not None:
             def logistics_entry(state: AgentState, runtime: Runtime[FinancialContext]):
                 return logistica_node(state, repository=financial_repository,
@@ -453,6 +462,41 @@ def build_graph(checkpointer=None, *, financial_repository=None):
                     authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"))
             node = financial_entry
         builder.add_node(name, node)
+
+    def preparar_garantia(state: AgentState, runtime: Runtime[FinancialContext]):
+        operation = validate_pending_warranty_operation(state.get("pending_warranty_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        return {"pending_warranty_operation": operation}
+
+    def ejecutar_garantia(state: AgentState, runtime: Runtime[FinancialContext]):
+        operation = validate_pending_warranty_operation(state.get("pending_warranty_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        if state.get("ticket_id") != operation["payload"]["ticket_id"]:
+            raise ValueError("Ticket pendiente incompatible")
+        row = financial_repository.create_warranty_claim(**operation["payload"])
+        ticket = financial_repository.get_ticket(customer_id=operation["payload"]["customer_id"], ticket_id=row["ticket_id"])
+        patch = {"pending_warranty_operation": None, "warranty_preparation_ready": False,
+                 "warranty_claim_id": row["id"], "claim_code": row["claim_code"],
+                 "warranty_id": row["warranty_id"], "ticket_status": ticket["status"],
+                 "warranty_claim": {"reason": row["reason"], "status": row["status"]}}
+        try:
+            financial_repository.get_logistics_context(customer_id=operation["payload"]["customer_id"], ticket_id=row["ticket_id"])
+        except (ValueError, LookupError):
+            return {**patch, "messages": [AIMessage(content="Reclamo persistido; sus condiciones actuales no permiten coordinar ingreso. No hay reparación aprobada.")]}
+        return {**patch, **handoff("garantia", "transferir_a_logistica", motivo="Coordinar ingreso de reclamo persistido IN_REVIEW")}
+
+    builder.add_node("preparar_garantia", preparar_garantia)
+    builder.add_node("ejecutar_garantia", ejecutar_garantia)
+    builder.add_edge("preparar_garantia", "ejecutar_garantia")
+    builder.add_conditional_edges("ejecutar_garantia", tools_condition, {"tools": "garantia_tools", "__end__": END})
+
+    def warranty_route(state):
+        if tools_condition(state) == "tools":
+            return "tools"
+        return "prepare" if (financial_repository is not None and state.get("pending_warranty_operation")
+                             and state.get("warranty_preparation_ready") is True) else "__end__"
 
     def preparar_pago(state: AgentState, runtime: Runtime[FinancialContext]):
         pending = validate_pending_payment_operation(state.get("pending_payment_operation"),
@@ -516,6 +560,7 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         ("compras", compras_tools),
         ("facturacion", facturacion_tools),
         ("logistica", logistica_tools),
+        ("garantia", garantia_tools),
     ):
         builder.add_node(f"{name}_tools", ToolNode(tools, handle_tool_errors=True))
 
@@ -528,12 +573,17 @@ def build_graph(checkpointer=None, *, financial_repository=None):
     builder.add_node("auditar_compras", auditar_compras)
     builder.add_node("auditar_facturacion", auditar_facturacion)
     builder.add_node("auditar_logistica", auditar_logistica)
+    builder.add_node("auditar_garantia", lambda state: registrar_handoff(state, "garantia"))
 
     builder.add_node("preparar_turno", preparar_turno)
     builder.add_edge(START, "preparar_turno")
     builder.add_conditional_edges("preparar_turno", route_entry,
                                   {name: name for name in AGENT_NODES})
     for agente in AGENT_NODES:
+        if agente == "garantia":
+            builder.add_conditional_edges(agente, warranty_route,
+                {"tools": "garantia_tools", "prepare": "preparar_garantia", "__end__": END})
+            continue
         if agente == "logistica":
             builder.add_conditional_edges(agente, logistics_route,
                 {"tools": "logistica_tools", "prepare": "preparar_logistica", "__end__": END})
@@ -557,6 +607,7 @@ def build_graph(checkpointer=None, *, financial_repository=None):
     builder.add_edge("compras_tools", "auditar_compras")
     builder.add_edge("facturacion_tools", "auditar_facturacion")
     builder.add_edge("logistica_tools", "auditar_logistica")
+    builder.add_edge("garantia_tools", "auditar_garantia")
 
     rutas = {**{name: name for name in AGENT_NODES}, "finalizar": END}
     for auditor in (
@@ -566,13 +617,14 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         "auditar_compras",
         "auditar_facturacion",
         "auditar_logistica",
+        "auditar_garantia",
     ):
         builder.add_conditional_edges(auditor, route_next_agent, rutas)
 
     # Static interrupt forces a saved checkpoint before the execution superstep.
     # Resume requires a trusted caller using invoke(None, context=...) explicitly.
     return builder.compile(checkpointer=checkpointer,
-        interrupt_before=["ejecutar_pago", "ejecutar_logistica"] if financial_repository is not None else None)
+        interrupt_before=["ejecutar_pago", "ejecutar_logistica", "ejecutar_garantia"] if financial_repository is not None else None)
 
 
 # Compatible con scripts y Conversation que invocan sin thread_id.

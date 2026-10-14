@@ -70,7 +70,7 @@ def test_incoming_handoffs_and_audit(network, logistics_db, monkeypatch, origin)
     assert result["handoff_history"][-1] == {"origen":origin,"destino":"logistica"}
     assert result["handoff_records"][-1]["motivo"] == "Coordinar recepción"
     pairs(result)
-    assert "garantia" not in module.AGENT_NODES
+    assert "garantia" in module.AGENT_NODES
 
 
 def test_http_explicit_resume_and_other_client_rejected(network, logistics_db):

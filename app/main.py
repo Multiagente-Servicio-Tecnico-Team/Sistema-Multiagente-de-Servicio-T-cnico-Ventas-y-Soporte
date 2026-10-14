@@ -333,6 +333,7 @@ def create_app(
         thread_id: str | None = None,
         resume_payment: bool = False,
         resume_logistics: bool = False,
+        resume_warranty: bool = False,
     ) -> dict[str, Any]:
         from app.agents.orquestador.graph.state import AgentState as OrchestratorState
         from app.agents.jerarquico.graph.state import ServiceState
@@ -380,7 +381,17 @@ def create_app(
                     if pending is not None:
                         validate_pending_payment_operation(pending, authenticated_customer_id=customer.id,
                                                            request_revision=saved.get("request_revision"))
-                    if resume_logistics:
+                    from app.agents.decentralized.warranty_operations import validate_pending_warranty_operation
+                    warranty_pending = saved.get("pending_warranty_operation") if saved else None
+                    if warranty_pending is not None:
+                        validate_pending_warranty_operation(warranty_pending, authenticated_customer_id=customer.id, request_revision=saved.get("request_revision"))
+                    if resume_warranty:
+                        if warranty_pending is None or "ejecutar_garantia" not in snapshot.next:
+                            raise HTTPException(status_code=409, detail="No hay reclamo pendiente de reanudación.")
+                        state = None
+                    elif not resume_logistics and not resume_payment and "ejecutar_garantia" in snapshot.next:
+                        raise HTTPException(status_code=409, detail="El reclamo requiere reanudación explícita.")
+                    elif resume_logistics:
                         if logistics_pending is None or "ejecutar_logistica" not in snapshot.next:
                             raise HTTPException(status_code=409, detail="No hay una operación logística pendiente de reanudación.")
                         state = None
@@ -487,9 +498,9 @@ def create_app(
                 )
 
         assert conversation is not None
-        if body.action in {"resume_payment", "resume_logistics"} and body.pattern != "decentralized":
+        if body.action in {"resume_payment", "resume_logistics", "resume_warranty"} and body.pattern != "decentralized":
             raise HTTPException(status_code=409, detail="Acción no disponible para este patrón.")
-        if body.action and body.action not in {"resume_payment", "resume_logistics"} and (
+        if body.action and body.action not in {"resume_payment", "resume_logistics", "resume_warranty"} and (
             body.pattern == "decentralized"
             or not conversation["pending_quote"]
         ):
@@ -529,6 +540,7 @@ def create_app(
                     thread_id=thread_id,
                     resume_payment=body.action == "resume_payment",
                     resume_logistics=body.action == "resume_logistics",
+                    resume_warranty=body.action == "resume_warranty",
                 )
             except (SQLAlchemyError, OSError) as exc:
                 logger.error(

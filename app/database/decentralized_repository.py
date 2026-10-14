@@ -61,6 +61,109 @@ def _total(amounts):
 
 
 class DecentralizedRepository:
+    def get_warranty(self, *, customer_id, warranty_code):
+        from sqlalchemy import func
+        with self.engine.connect() as connection:
+            warranties = self._table(connection, "warranties")
+            row = connection.execute(select(warranties, func.current_date().label("as_of")).where(
+                warranties.c.customer_id == _id(customer_id), warranties.c.warranty_code == _text(warranty_code, 50)
+            )).mappings().first()
+            if row is None:
+                raise LookupError("Garantía no encontrada")
+            status = row["status"]
+            if status != "VOIDED" and row["end_date"] < row["as_of"]:
+                status = "EXPIRED"
+            elif status == "ACTIVE" and row["start_date"] > row["as_of"]:
+                status = "NOT_STARTED"  # Presentation only; never a persisted enum.
+            return {**row, "effective_status": status}
+
+    def get_warranty_claim(self, *, customer_id, claim_id):
+        with self.engine.connect() as connection:
+            claims = self._table(connection, "warranty_claims")
+            warranties = self._table(connection, "warranties")
+            tickets = self._table(connection, "tickets")
+            row = connection.execute(select(claims).join(warranties, claims.c.warranty_id == warranties.c.id)
+                .join(tickets, claims.c.ticket_id == tickets.c.id).where(claims.c.id == _id(claim_id),
+                    warranties.c.customer_id == _id(customer_id), tickets.c.customer_id == customer_id)).mappings().first()
+            if row is None:
+                raise LookupError("Reclamo no encontrado")
+            return dict(row)
+
+    def create_warranty_claim(self, *, customer_id, ticket_id, warranty_code, claim_code, reason):
+        from sqlalchemy import func
+        values = dict(ticket_id=_id(ticket_id), claim_code=_text(claim_code, 50), reason=_text(reason))
+        code = _text(warranty_code, 50)
+        with self.engine.begin() as connection:
+            self._customer(connection, customer_id)
+            tickets, ticket = self._ticket(connection, customer_id, ticket_id, lock=True)
+            warranties = self._table(connection, "warranties")
+            warranty = connection.execute(select(warranties).where(warranties.c.warranty_code == code,
+                warranties.c.customer_id == customer_id).with_for_update()).mappings().first()
+            if warranty is None:
+                raise LookupError("Garantía no encontrada")
+            claims = self._table(connection, "warranty_claims")
+            existing = list(connection.execute(select(claims).where(
+                (claims.c.claim_code == values["claim_code"]) | (claims.c.ticket_id == ticket_id)
+            ).with_for_update()).mappings())
+            values["warranty_id"] = warranty["id"]
+            if existing:
+                if len(existing) != 1 or any(existing[0][key] != value for key, value in values.items()):
+                    raise RetryConflict("Reclamo existente incompatible")
+                return dict(existing[0])
+            today = connection.scalar(select(func.current_date()))
+            if (ticket["request_type"] != "WARRANTY_CLAIM" or ticket["status"] != "NEW"
+                    or warranty["status"] != "ACTIVE" or not warranty["start_date"] <= today <= warranty["end_date"]):
+                raise ValueError("Condiciones de reclamo no satisfechas")
+            claim_id = connection.execute(insert(claims).values(**values, status="IN_REVIEW").returning(claims.c.id)).scalar_one()
+            result = connection.execute(update(tickets).where(tickets.c.id == ticket_id,
+                tickets.c.customer_id == customer_id, tickets.c.status == "NEW").values(status="WARRANTY_IN_REVIEW"))
+            if result.rowcount != 1:
+                raise RuntimeError("Ticket de reclamo no actualizado")
+            return dict(connection.execute(select(claims).where(claims.c.id == claim_id)).mappings().one())
+
+    def create_warranty(self, *, customer_id, ticket_id, quote_id, warranty_code, item_or_service_name, authorization):
+        """Caller supplies a trusted server grant, never a user/model assertion.
+
+        The API has no issuer of such grants yet and leaves issuance disabled.
+        Locking the customer and ticket serializes different conversations.
+        """
+        from sqlalchemy import func, cast, Date, literal_column
+        from datetime import date
+        from calendar import monthrange
+        values = dict(customer_id=_id(customer_id), ticket_id=_id(ticket_id), quote_id=_id(quote_id),
+            warranty_code=_text(warranty_code, 50), item_or_service_name=_text(item_or_service_name, 200))
+        expected = {key: values[key] for key in ("customer_id", "ticket_id", "quote_id", "item_or_service_name")}
+        if not isinstance(authorization, dict) or authorization != expected:
+            raise ValueError("Falta autorización comercial del servidor")
+        with self.engine.begin() as connection:
+            self._customer(connection, customer_id)
+            _, ticket = self._ticket(connection, customer_id, ticket_id, lock=True)
+            quotes = self._table(connection, "quotes")
+            quote = connection.execute(select(quotes).where(quotes.c.id == quote_id,
+                quotes.c.ticket_id == ticket_id, quotes.c.status == "ACCEPTED").with_for_update()).mappings().first()
+            if quote is None or ticket["request_type"] not in {"SALE", "PC_BUILD", "REPAIR", "SUPPORT"} or ticket["status"] == "CANCELLED":
+                raise ValueError("Referencias comerciales incompatibles")
+            warranties = self._table(connection, "warranties")
+            existing = list(connection.execute(select(warranties).where(
+                (warranties.c.warranty_code == values["warranty_code"]) | (warranties.c.ticket_id == ticket_id)
+            ).with_for_update()).mappings())
+            if existing:
+                if len(existing) != 1 or any(existing[0][key] != value for key, value in values.items()) or existing[0]["warranty_months"] != 3:
+                    raise RetryConflict("Emisión existente incompatible")
+                return dict(existing[0])
+            if connection.dialect.name == "postgresql":
+                expiry = cast(func.current_date() + literal_column("INTERVAL '3 months'"), Date)
+            else:
+                # Isolated SQLite tests reproduce PostgreSQL's month-end clamp.
+                today = connection.scalar(select(func.current_date()))
+                month = today.month + 3
+                year = today.year + (month - 1) // 12
+                month = (month - 1) % 12 + 1
+                expiry = date(year, month, min(today.day, monthrange(year, month)[1]))
+            warranty_id = connection.execute(insert(warranties).values(**values, warranty_months=3,
+                start_date=func.current_date(), end_date=expiry, status="ACTIVE").returning(warranties.c.id)).scalar_one()
+            return dict(connection.execute(select(warranties).where(warranties.c.id == warranty_id)).mappings().one())
+
     def __init__(self, engine=None):
         self._engine = engine
 

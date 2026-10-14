@@ -15,7 +15,7 @@ def test_facturacion_registered_and_pending_preserved(network):
     assert result["pending_payment_operation"] == pending
     assert "payment_id" not in result
     assert "logistica" in graph_module.AGENT_NODES
-    assert "garantia" not in graph_module.AGENT_NODES
+    assert "garantia" in graph_module.AGENT_NODES
 
 
 @pytest.mark.parametrize("origin", ["soporte", "ventas"])

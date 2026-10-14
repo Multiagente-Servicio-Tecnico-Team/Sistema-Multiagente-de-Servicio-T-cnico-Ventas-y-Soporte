@@ -216,6 +216,19 @@ class PendingLogisticsOperation(TypedDict):
     payload: dict[str, Any]
 
 
+class WarrantyClaimCreationPayload(TypedDict):
+    customer_id: int
+    ticket_id: int
+    warranty_code: str
+    claim_code: str
+    reason: str
+
+
+class PendingWarrantyOperation(TypedDict):
+    request_revision: int
+    payload: WarrantyClaimCreationPayload
+
+
 class AgentState(TypedDict, total=False):
     # Historial compartido entre agentes
     messages: Annotated[list[AnyMessage], add_messages]
@@ -260,6 +273,8 @@ class AgentState(TypedDict, total=False):
     ticket_status: TicketStatus | None
     pending_ticket_operation: PendingTicketOperation | None
     pending_payment_operation: PendingPaymentOperation | None
+    pending_warranty_operation: PendingWarrantyOperation | None
+    warranty_preparation_ready: bool
     pending_logistics_operation: PendingLogisticsOperation | None
     logistics_preparation_ready: bool
     quote_id: int | None
@@ -316,7 +331,8 @@ def invalidate_request(state: AgentState, *, new_request: bool = False) -> Agent
     """
     if (state.get("pending_ticket_operation") is not None
             or state.get("pending_payment_operation") is not None
-            or state.get("pending_logistics_operation") is not None):
+            or state.get("pending_logistics_operation") is not None
+            or state.get("pending_warranty_operation") is not None):
         from app.database.decentralized_repository import RetryConflict
         raise RetryConflict("Reconciliar operación pendiente antes de cambiar la solicitud")
     revision = state.get("request_revision", 0)
@@ -325,7 +341,7 @@ def invalidate_request(state: AgentState, *, new_request: bool = False) -> Agent
     update: AgentState = {
         "request_revision": revision + 1,
         "inventory_revision": None, "proposal": None, "proposal_decision": None,
-        "logistics_preparation_ready": False,
+        "logistics_preparation_ready": False, "warranty_preparation_ready": False,
         "quote": {}, "quote_scope": "", "inventory_query": None,
         "required_parts": [], "inventory_results": [], "inventory_pending": True,
         "selected_items": [], "inventory_checks": [], "out_of_stock_items": [],

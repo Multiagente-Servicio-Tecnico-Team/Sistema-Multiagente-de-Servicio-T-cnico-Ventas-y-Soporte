@@ -29,7 +29,10 @@ llm = ChatGroq(
 from app.agents.decentralized.tools.facturacion_tools import transferir_a_facturacion
 from app.agents.decentralized.tools.logistica_tools import transferir_a_logistica
 
+from app.agents.decentralized.tools.garantia_tools import transferir_a_garantia
+
 soporte_tools = [
+    transferir_a_garantia,
     transferir_a_logistica,
     transferir_a_facturacion,
     consultar_estado_ticket,
@@ -44,6 +47,7 @@ soporte_llm = llm.bind_tools(soporte_tools)
 
 # Instrucciones y responsabilidades del agente
 SYSTEM_PROMPT = """
+Las consultas de vigencia y reclamos de garantía se derivan a Garantía con motivo explícito; consultar vigencia no crea un ticket.
 Eres el agente de Soporte de un sistema multiagente
 de servicio técnico, ventas y soporte.
 
