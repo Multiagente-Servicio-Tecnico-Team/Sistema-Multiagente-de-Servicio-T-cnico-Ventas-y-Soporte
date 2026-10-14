@@ -106,3 +106,16 @@
   revisar/admin para ser solo lectura. Build Vite aprobado. Sin consultas ni escrituras
   PostgreSQL. Evidencia: spec 15, docs 18.
 - Seed de inventario (2026-10-13): precios de referencia en PEN ajustados con cat?logos peruanos; RAM y almacenamiento compactados para retirar filas redundantes y SKU duplicados entre bloques. Filas: 438 ? 310; 310 c?digos ?nicos y sin duplicados exactos de nombre/categor?a. Limitaci?n: ambos `ON CONFLICT (code) DO NOTHING` no actualizan cat?logo ya sembrado; no se ejecut? SQL ni se toc? PostgreSQL. Evidencia: spec 16, docs 19.
+- 2026-10-13: Documentado el patrón jerárquico con enlaces a archivos fuente,
+  diagrama Mermaid y ocho espacios sugeridos para capturas. La guía explicita que
+  los supervisores de equipo son enrutadores deterministas, el RAG es lexical
+  sobre Markdown, el checkpoint es en memoria y Compras aún no puede cotizar
+  proveedores por falta de relación proveedor-producto/precio. Evidencia:
+  `docs/20-patron-jerarquico.md`, `spec/17-documentacion-patron-jerarquico.md` y
+  `docs/21-evidencia-patron-jerarquico.md`. Solo se hizo revisión estática.
+- 2026-10-13: El falso positivo del RAG para «consulta sobre horario de atención»
+  era un defecto real: «consulta» coincidía con el texto de solución del caso RAM.
+  Se añadió «consulta(s)» y «sobre» a los términos genéricos del recuperador técnico;
+  se conservó la regresión porque protege la separación del recuperador FAQ. Validación:
+  `python -m unittest discover -s tests -p test_retriever.py -v` (7/7) y
+  `git diff --check`.
