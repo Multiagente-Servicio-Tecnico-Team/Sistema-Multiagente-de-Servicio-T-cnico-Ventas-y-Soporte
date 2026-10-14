@@ -149,10 +149,11 @@ def test_importacion_y_fabrica_sin_checkpointer(graph_module):
     assert first is not second
     result = first.invoke({"messages": [HumanMessage(content="Mi PC no enciende")]})
     assert result["current_agent"] == "tecnico"
-    assert set(graph_module.AGENT_NODES) == {"soporte", "tecnico", "ventas", "almacen", "software", "compras", "facturacion"}
+    assert set(graph_module.AGENT_NODES) == {"soporte", "tecnico", "ventas", "almacen", "software", "compras", "facturacion", "logistica"}
     assert {"software", "software_tools", "auditar_software"} <= set(first.nodes)
     assert {"facturacion", "facturacion_tools", "auditar_facturacion"}.issubset(first.nodes)
-    assert not {"logistica", "garantia"} & set(first.nodes)
+    assert {"logistica", "logistica_tools", "auditar_logistica"}.issubset(first.nodes)
+    assert "garantia" not in first.nodes
 
 
 @pytest.mark.parametrize("origin,target,reason,error", [

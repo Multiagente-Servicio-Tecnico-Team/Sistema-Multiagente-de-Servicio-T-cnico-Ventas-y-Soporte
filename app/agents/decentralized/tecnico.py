@@ -23,7 +23,10 @@ llm = ChatGroq(
     },
 )
 
+from app.agents.decentralized.tools.logistica_tools import transferir_a_logistica
+
 tecnico_tools = [
+    transferir_a_logistica,
     transferir_a_soporte,
     transferir_a_software,
     diagnosticar_problema,

@@ -18,6 +18,8 @@ from app.agents.decentralized.almacen import almacen_node, almacen_tools
 from app.agents.decentralized.software import software_node, software_tools
 from app.agents.decentralized.compras import compras_node, compras_tools
 from app.agents.decentralized.facturacion import facturacion_node, facturacion_tools
+from app.agents.decentralized.logistica import logistica_node, logistica_tools
+from app.agents.decentralized.logistics_operations import validate_pending_logistics_operation
 from app.agents.decentralized.payment_operations import validate_pending_payment_operation
 from langgraph.runtime import Runtime
 from typing_extensions import TypedDict
@@ -35,6 +37,7 @@ AGENT_NODES = {
     "software": software_node,
     "compras": compras_node,
     "facturacion": facturacion_node,
+    "logistica": logistica_node,
 }
 
 
@@ -395,6 +398,10 @@ def auditar_facturacion(state: AgentState):
     return registrar_handoff(state, "facturacion")
 
 
+def auditar_logistica(state: AgentState):
+    return registrar_handoff(state, "logistica")
+
+
 def route_next_agent(state: AgentState):
     return state.get("next_agent") or "finalizar"
 
@@ -434,6 +441,11 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         raise ValueError("Preparación financiera requiere checkpointer explícito")
     builder = StateGraph(AgentState, context_schema=FinancialContext)
     for name, node in AGENT_NODES.items():
+        if name == "logistica" and financial_repository is not None:
+            def logistics_entry(state: AgentState, runtime: Runtime[FinancialContext]):
+                return logistica_node(state, repository=financial_repository,
+                    authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"))
+            node = logistics_entry
         if name == "facturacion" and financial_repository is not None:
             # Trusted invocation context is not checkpointed or model-generated.
             def financial_entry(state: AgentState, runtime: Runtime[FinancialContext]):
@@ -460,6 +472,36 @@ def build_graph(checkpointer=None, *, financial_repository=None):
     builder.add_edge("preparar_pago", "ejecutar_pago")
     builder.add_edge("ejecutar_pago", END)
 
+    def preparar_logistica(state: AgentState, runtime: Runtime[FinancialContext]):
+        operation = validate_pending_logistics_operation(state.get("pending_logistics_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        return {"pending_logistics_operation": operation}
+
+    def ejecutar_logistica(state: AgentState, runtime: Runtime[FinancialContext]):
+        operation = validate_pending_logistics_operation(state.get("pending_logistics_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        if state.get("ticket_id") != operation["payload"]["ticket_id"]:
+            raise ValueError("Ticket pendiente incompatible")
+        row = financial_repository.create_initial_logistics(**operation["payload"])
+        return {"pending_logistics_operation": None, "logistics_record_id": row["id"],
+                "logistics_preparation_ready": False,
+                "logistics": {key:row.get(key) for key in ("mode", "status", "courier_company", "shipping_address",
+                               "recipient_name", "recipient_phone", "tracking_number", "scheduled_date", "received_at", "delivered_at")},
+                "messages": [AIMessage(content="El registro logístico está confirmado en el sistema. Su estado es " + row["status"] + ". Este registro no confirma recepción física, preparación, despacho ni entrega.")]}
+
+    builder.add_node("preparar_logistica", preparar_logistica)
+    builder.add_node("ejecutar_logistica", ejecutar_logistica)
+    builder.add_edge("preparar_logistica", "ejecutar_logistica")
+    builder.add_edge("ejecutar_logistica", END)
+
+    def logistics_route(state):
+        if tools_condition(state) == "tools":
+            return "tools"
+        return "prepare" if (financial_repository is not None and state.get("pending_logistics_operation")
+                             and state.get("logistics_preparation_ready") is True) else "__end__"
+
     def financial_route(state):
         if tools_condition(state) == "tools":
             return "tools"
@@ -473,6 +515,7 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         ("software", software_tools),
         ("compras", compras_tools),
         ("facturacion", facturacion_tools),
+        ("logistica", logistica_tools),
     ):
         builder.add_node(f"{name}_tools", ToolNode(tools, handle_tool_errors=True))
 
@@ -484,12 +527,17 @@ def build_graph(checkpointer=None, *, financial_repository=None):
     builder.add_node("auditar_software", auditar_software)
     builder.add_node("auditar_compras", auditar_compras)
     builder.add_node("auditar_facturacion", auditar_facturacion)
+    builder.add_node("auditar_logistica", auditar_logistica)
 
     builder.add_node("preparar_turno", preparar_turno)
     builder.add_edge(START, "preparar_turno")
     builder.add_conditional_edges("preparar_turno", route_entry,
                                   {name: name for name in AGENT_NODES})
     for agente in AGENT_NODES:
+        if agente == "logistica":
+            builder.add_conditional_edges(agente, logistics_route,
+                {"tools": "logistica_tools", "prepare": "preparar_logistica", "__end__": END})
+            continue
         if agente == "facturacion":
             builder.add_conditional_edges(agente, financial_route,
                 {"tools": "facturacion_tools", "prepare": "preparar_pago", "__end__": END})
@@ -508,6 +556,7 @@ def build_graph(checkpointer=None, *, financial_repository=None):
     builder.add_edge("software_tools", "auditar_software")
     builder.add_edge("compras_tools", "auditar_compras")
     builder.add_edge("facturacion_tools", "auditar_facturacion")
+    builder.add_edge("logistica_tools", "auditar_logistica")
 
     rutas = {**{name: name for name in AGENT_NODES}, "finalizar": END}
     for auditor in (
@@ -516,13 +565,14 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         "auditar_software",
         "auditar_compras",
         "auditar_facturacion",
+        "auditar_logistica",
     ):
         builder.add_conditional_edges(auditor, route_next_agent, rutas)
 
     # Static interrupt forces a saved checkpoint before the execution superstep.
     # Resume requires a trusted caller using invoke(None, context=...) explicitly.
     return builder.compile(checkpointer=checkpointer,
-        interrupt_before=["ejecutar_pago"] if financial_repository is not None else None)
+        interrupt_before=["ejecutar_pago", "ejecutar_logistica"] if financial_repository is not None else None)
 
 
 # Compatible con scripts y Conversation que invocan sin thread_id.

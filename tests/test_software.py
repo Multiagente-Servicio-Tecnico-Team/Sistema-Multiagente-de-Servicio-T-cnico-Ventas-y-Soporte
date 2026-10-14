@@ -75,7 +75,7 @@ def test_contexto_completo_sin_mutacion_ni_diagnostico_inventado(agent):
     assert regular.calls[0][2:] == history
     assert "Hipótesis previa" in regular.calls[0][1].content
     assert "Pendiente" in regular.calls[0][1].content
-    assert bindings[0][0] == ["transferir_a_soporte", "transferir_a_tecnico", "transferir_a_ventas", "consultar_base_conocimiento"]
+    assert bindings[0][0] == ["transferir_a_soporte", "transferir_a_tecnico", "transferir_a_ventas", "consultar_base_conocimiento", "transferir_a_logistica"]
 
 
 @pytest.mark.parametrize("text", ["Pantalla azul", "Mi equipo está lento"])

@@ -13,9 +13,10 @@ from app.agents.decentralized.tools.software_tools import (
     transferir_a_soporte, transferir_a_tecnico, transferir_a_ventas,
 )
 from app.rag.tools import consultar_base_conocimiento
+from app.agents.decentralized.tools.logistica_tools import transferir_a_logistica
 
 software_tools = [transferir_a_soporte, transferir_a_tecnico,
-                  transferir_a_ventas, consultar_base_conocimiento]
+                  transferir_a_ventas, consultar_base_conocimiento, transferir_a_logistica]
 software_llm = software_llm_rag = None
 _initialization_error = None
 try:

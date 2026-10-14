@@ -9,18 +9,21 @@ from app.agents.decentralized.payment_operations import (
     prepare_pending_payment_operation, generate_payment_code,
 )
 from app.database.decentralized_repository import _id, _money, RetryConflict
+from app.agents.decentralized.policy import handoff
 from app.agents.decentralized.tools.facturacion_tools import (
     transferir_a_soporte, transferir_a_ventas, consultar_capacidades_financieras,
 )
 
-facturacion_tools = [transferir_a_soporte, transferir_a_ventas, consultar_capacidades_financieras]
+from app.agents.decentralized.tools.logistica_tools import transferir_a_logistica
+
+facturacion_tools = [transferir_a_soporte, transferir_a_ventas, consultar_capacidades_financieras, transferir_a_logistica]
 
 SYSTEM_PROMPT = """Eres Facturación y Pagos de la red descentralizada.
 Ventas conserva los precios y la cotización. Solo una cotización SQL ACCEPTED,
 del cliente y ticket correctos, permite preparar una orden PENDING.
 Una orden pendiente no acredita pago recibido. No confirmes COMPLETED por chat.
 No emitas factura fiscal ni apruebes reembolsos sin herramientas autorizadas.
-No anuncies códigos de pagos antes del commit. Logística no está disponible.
+No anuncies códigos de pagos antes del commit. Logística revalida precondiciones SQL.
 La creación de pagos está deshabilitada hasta validar recuperación durable previa.
 """
 
@@ -33,6 +36,21 @@ def facturacion_node(state: AgentState, *, repository=None, authenticated_custom
     if state.get("intent") == "REFUND":
         return response("La solicitud de reembolso requiere localizar y verificar el pago y el saldo reembolsable. Esa operación no está habilitada; no se ha registrado ni aprobado un reembolso.")
     if state.get("payment_id") is not None or state.get("payment_code") is not None:
+        if repository is not None and authenticated_customer_id is not None and state.get("payment_id") is not None:
+            try:
+                customer = _id(authenticated_customer_id)
+                if _id(state.get("customer_id")) != customer:
+                    raise ValueError("Identidad incompatible")
+                payment = repository.get_payment(customer_id=customer, payment_id=_id(state["payment_id"]))
+                if (payment["ticket_id"] != state.get("ticket_id") or payment["quote_id"] != state.get("quote_id")
+                        or payment["status"] not in {"PENDING", "COMPLETED"}):
+                    raise ValueError("Pago incompatible")
+                repository.get_logistics_context(customer_id=customer,ticket_id=_id(state["ticket_id"]))
+                # Read-only verified transition; never creates or confirms a payment.
+                return handoff("facturacion", "transferir_a_logistica",
+                               motivo="Coordinar logística con pago persistido verificado; pendiente no significa cobro recibido")
+            except Exception:
+                return response("No fue posible verificar el pago y las precondiciones logísticas. No se ha creado otra orden ni confirmado un cobro.")
         return response("Para informar el estado del pago necesitamos una consulta autorizada al registro financiero. Un mensaje o una captura no confirma el cobro. No se ha creado otra orden ni emitido una factura fiscal.")
     if repository is None or authenticated_customer_id is None:
         return response("Necesito una identidad autenticada y una consulta autorizada de la cotización persistida. No se ha creado una orden de pago.")

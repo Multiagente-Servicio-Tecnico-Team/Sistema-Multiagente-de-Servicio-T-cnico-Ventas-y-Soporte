@@ -27,8 +27,10 @@ llm = ChatGroq(
 
 # Herramientas disponibles para el agente de Soporte
 from app.agents.decentralized.tools.facturacion_tools import transferir_a_facturacion
+from app.agents.decentralized.tools.logistica_tools import transferir_a_logistica
 
 soporte_tools = [
+    transferir_a_logistica,
     transferir_a_facturacion,
     consultar_estado_ticket,
     transferir_a_tecnico,

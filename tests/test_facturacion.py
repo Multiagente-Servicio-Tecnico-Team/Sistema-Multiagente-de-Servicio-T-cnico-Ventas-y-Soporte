@@ -75,7 +75,7 @@ def test_no_trusted_identity_or_existing_payment_no_preparation():
 
 
 def test_tools_names_reasons_and_capabilities():
-    assert "transferir_a_logistica" not in {tool.name for tool in facturacion_tools}
+    assert "transferir_a_logistica" in {tool.name for tool in facturacion_tools}
     for tool in facturacion_tools:
         if tool.name.startswith("transferir_"):
             assert tool.name in HANDOFF_TOOLS

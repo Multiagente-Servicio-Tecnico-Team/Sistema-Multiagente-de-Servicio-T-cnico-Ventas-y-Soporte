@@ -193,6 +193,79 @@ class DecentralizedRepository:
                 tickets.c.customer_id == _id(customer_id)
             ).order_by(tickets.c.id)).mappings()]
 
+    def _logistics_preconditions(self, connection, customer_id, ticket_id):
+        _, ticket = self._ticket(connection, customer_id, ticket_id, lock=True)
+        if ticket["status"] in {"CANCELLED", "DELIVERED"}:
+            raise ValueError("Ticket cerrado; requiere revisión")
+        kind = ticket["request_type"]
+        if kind in {"REPAIR", "SUPPORT"}:
+            return ticket
+        if kind in {"SALE", "PC_BUILD"}:
+            quotes = self._table(connection, "quotes")
+            payments = self._table(connection, "payments")
+            row = connection.execute(select(payments.c.id).join(quotes, payments.c.quote_id == quotes.c.id).where(
+                payments.c.ticket_id == ticket_id, payments.c.customer_id == customer_id,
+                quotes.c.ticket_id == ticket_id, quotes.c.status == "ACCEPTED",
+                payments.c.status.in_(["PENDING", "COMPLETED"]), payments.c.amount > 0,
+                payments.c.amount == quotes.c.total_amount).with_for_update()).first()
+            if row is None:
+                raise ValueError("Falta cotización aceptada y pago persistido verificable")
+            return ticket
+        if kind == "WARRANTY_CLAIM":
+            claims = self._table(connection, "warranty_claims")
+            warranties = self._table(connection, "warranties")
+            from sqlalchemy import func
+            row = connection.execute(select(claims.c.id).join(warranties, claims.c.warranty_id == warranties.c.id).where(
+                claims.c.ticket_id == ticket_id, warranties.c.customer_id == customer_id,
+                claims.c.status == "IN_REVIEW", warranties.c.status.in_(["ACTIVE", "CLAIMED"]),
+                warranties.c.start_date <= func.current_date(), warranties.c.end_date >= func.current_date()
+            ).with_for_update()).first()
+            if row is None:
+                raise ValueError("Falta póliza vigente y reclamo persistido en revisión")
+            return ticket
+        raise ValueError("Flujo logístico no admitido")
+
+    def get_logistics_context(self, *, customer_id, ticket_id):
+        with self.engine.begin() as connection:
+            self._customer(connection, customer_id)
+            return self._logistics_preconditions(connection, _id(customer_id), _id(ticket_id))
+
+    def get_payment(self, *, customer_id, payment_id):
+        with self.engine.connect() as connection:
+            payments = self._table(connection, "payments")
+            tickets = self._table(connection, "tickets")
+            row = connection.execute(select(payments).join(tickets, payments.c.ticket_id == tickets.c.id).where(
+                payments.c.id == _id(payment_id), payments.c.customer_id == _id(customer_id),
+                tickets.c.customer_id == customer_id)).mappings().first()
+            if row is None:
+                raise LookupError("Pago no encontrado")
+            return dict(row)
+
+    def create_initial_logistics(self, *, customer_id, ticket_id, mode, courier_company=None,
+                                 shipping_address=None, recipient_name=None, recipient_phone=None):
+        """One equivalent initial record per ticket via row locks, no UNIQUE assumed.
+
+        Only inserts PENDING_RECEIPT. Does not modify ticket, stock, payment or
+        operational evidence. Different content/multiple existing records conflicts.
+        """
+        from app.agents.decentralized.logistics_operations import logistics_payload
+        customer_id, ticket_id = _id(customer_id), _id(ticket_id)
+        with self.engine.begin() as connection:
+            self._customer(connection, customer_id)
+            ticket = self._logistics_preconditions(connection, customer_id, ticket_id)
+            payload = logistics_payload(customer_id=customer_id, ticket_id=ticket_id,
+                request_type=ticket["request_type"], data=dict(mode=mode, courier_company=courier_company,
+                    shipping_address=shipping_address, recipient_name=recipient_name, recipient_phone=recipient_phone))
+            values = {key: value for key, value in payload.items() if key != "customer_id"}
+            table = self._table(connection, "logistics_records")
+            rows = list(connection.execute(select(table).where(table.c.ticket_id == ticket_id)).mappings())
+            if rows:
+                if len(rows) != 1 or any(rows[0][key] != value for key, value in values.items()):
+                    raise RetryConflict("Logística existente incompatible; requiere reconciliación")
+                return dict(rows[0])
+            return dict(connection.execute(insert(table).values(**values, status="PENDING_RECEIPT")
+                        .returning(*table.c)).mappings().one())
+
     def search_inventory(self, *, term, category=None, limit=20):
         """Código exacto primero; candidatos alternativos requieren selección."""
         term = _text(term)

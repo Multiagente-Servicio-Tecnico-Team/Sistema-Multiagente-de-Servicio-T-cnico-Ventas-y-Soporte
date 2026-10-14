@@ -332,6 +332,7 @@ def create_app(
         message: str,
         thread_id: str | None = None,
         resume_payment: bool = False,
+        resume_logistics: bool = False,
     ) -> dict[str, Any]:
         from app.agents.orquestador.graph.state import AgentState as OrchestratorState
         from app.agents.jerarquico.graph.state import ServiceState
@@ -365,19 +366,30 @@ def create_app(
             if pattern == "decentralized" and (graph_factories is None or financial_repository is not None):
                 from psycopg import Error as PsycopgError
                 from app.agents.decentralized.payment_operations import validate_pending_payment_operation
+                from app.agents.decentralized.logistics_operations import validate_pending_logistics_operation
                 try:
                     snapshot = graph.get_state(config)
                     saved = snapshot.values
                     if saved and saved.get("customer_id") != customer.id:
                         raise HTTPException(status_code=404, detail="Conversación no encontrada.")
                     pending = saved.get("pending_payment_operation") if saved else None
+                    logistics_pending = saved.get("pending_logistics_operation") if saved else None
+                    if logistics_pending is not None:
+                        validate_pending_logistics_operation(logistics_pending,
+                            authenticated_customer_id=customer.id, request_revision=saved.get("request_revision"))
                     if pending is not None:
                         validate_pending_payment_operation(pending, authenticated_customer_id=customer.id,
                                                            request_revision=saved.get("request_revision"))
-                    if resume_payment:
+                    if resume_logistics:
+                        if logistics_pending is None or "ejecutar_logistica" not in snapshot.next:
+                            raise HTTPException(status_code=409, detail="No hay una operación logística pendiente de reanudación.")
+                        state = None
+                    elif resume_payment:
                         if pending is None or "ejecutar_pago" not in snapshot.next:
                             raise HTTPException(status_code=409, detail="No hay una operación financiera pendiente de reanudación.")
                         state = None
+                    elif "ejecutar_logistica" in snapshot.next:
+                        raise HTTPException(status_code=409, detail="La operación logística requiere reanudación explícita.")
                     elif "ejecutar_pago" in snapshot.next:
                         raise HTTPException(status_code=409, detail="La operación financiera requiere reanudación explícita.")
                     return graph.invoke(state, config=config,
@@ -475,9 +487,9 @@ def create_app(
                 )
 
         assert conversation is not None
-        if body.action == "resume_payment" and body.pattern != "decentralized":
+        if body.action in {"resume_payment", "resume_logistics"} and body.pattern != "decentralized":
             raise HTTPException(status_code=409, detail="Acción no disponible para este patrón.")
-        if body.action and body.action != "resume_payment" and (
+        if body.action and body.action not in {"resume_payment", "resume_logistics"} and (
             body.pattern == "decentralized"
             or not conversation["pending_quote"]
         ):
@@ -516,6 +528,7 @@ def create_app(
                     message,
                     thread_id=thread_id,
                     resume_payment=body.action == "resume_payment",
+                    resume_logistics=body.action == "resume_logistics",
                 )
             except (SQLAlchemyError, OSError) as exc:
                 logger.error(
