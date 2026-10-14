@@ -94,7 +94,7 @@ def _build_decentralized_graph(checkpointer, *, financial_repository=None) -> An
     from app.agents.decentralized.graph import build_graph
     from app.database.decentralized_repository import DecentralizedRepository
 
-    return build_graph(checkpointer=checkpointer, financial_repository=(
+    return build_graph(checkpointer=checkpointer, ticket_writes=True, financial_repository=(
         financial_repository if financial_repository is not None else DecentralizedRepository()))
 
 
@@ -208,6 +208,10 @@ def _reply_for_result(pattern: str, result: dict[str, Any]) -> str:
 
 
 def _ticket_for_result(pattern: str, result: dict[str, Any]) -> TicketOut | None:
+    if pattern == "decentralized":
+        if type(result.get("ticket_id")) is int and result["ticket_id"] > 0 and result.get("ticket_code") and result.get("ticket_status"):
+            return TicketOut(code=result["ticket_code"], status=result["ticket_status"])
+        return None
     if pattern == "hierarchical" and result.get("outcome") == "quoted":
         code = result.get("ticket_code")
     elif pattern == "orchestrator" and result.get("quote_id") is not None:
@@ -393,6 +397,22 @@ def create_app(
                     saved = snapshot.values
                     if saved and saved.get("customer_id") != customer.id:
                         raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+                    if "ejecutar_ticket" in snapshot.next:
+                        from app.agents.decentralized.ticket_operations import validate_pending_ticket_operation
+                        from app.agents.decentralized.policy import normalizar
+                        validate_pending_ticket_operation(saved.get("pending_ticket_operation"),
+                            authenticated_customer_id=customer.id, request_revision=saved.get("request_revision"))
+                        if saved.get("ticket_correction_required") or normalizar(message).strip(" .!¿?¡") not in {
+                                "continuar", "continua", "confirmo", "registrar", "reintentar", "reintento", "si"}:
+                            from app.agents.decentralized.ticket_intake import classify_request
+                            blocked = saved.get("ticket_correction_required") or classify_request(message) not in {"INFO_QUERY", "WARRANTY_STATUS_CHECK"}
+                            if blocked:
+                                graph.update_state(config, {"ticket_correction_required": True})
+                            raise HTTPException(status_code=409, detail=(
+                                "La operación quedó bloqueada por una corrección y necesita reconciliación. No se intentará otra escritura."
+                                if blocked else "Hay una solicitud preparada. Responde continuar para registrar esa misma solicitud."))
+                        return graph.invoke(None, config=config,
+                            context={"authenticated_customer_id": customer.id}, durability="sync")
                     pending = saved.get("pending_payment_operation") if saved else None
                     logistics_pending = saved.get("pending_logistics_operation") if saved else None
                     if logistics_pending is not None:

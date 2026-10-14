@@ -55,6 +55,15 @@ describe("cerrar sesión", () => {
 });
 
 describe("nueva consulta desde el chat", () => {
+  it("una FAQ no entra a reparación ni crea una consulta local", async () => {
+    const user = userEvent.setup();
+    renderApp("/portal/asistente", client);
+    expect(screen.getByText(/Modo de demostración local:/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Mensaje"), "¿Qué servicios técnicos ofrecen?{Enter}");
+    expect(await screen.findByText(/Esta es una consulta informativa/)).toBeInTheDocument();
+    expect(screen.queryByText(/Ahora describe la falla/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Consulta simulada #/)).not.toBeInTheDocument();
+  });
   it("pide equipo y falla, crea el ticket y lo muestra en Mis Tickets", async () => {
     const user = userEvent.setup();
     renderApp("/portal/asistente", client);
@@ -66,7 +75,7 @@ describe("nueva consulta desde el chat", () => {
     expect(await screen.findByText(/Ahora describe la falla/)).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Mensaje"), "Se apaga al abrir juegos{Enter}");
-    expect(await screen.findByText("Ticket #TCK-2053 registrado")).toBeInTheDocument();
+    expect(await screen.findByText("Consulta simulada #TCK-2053")).toBeInTheDocument();
 
     await user.click(screen.getByRole("link", { name: "Ver en Mis Tickets" }));
     const card = (await screen.findByText("Laptop Lenovo Legion 5")).closest("article");

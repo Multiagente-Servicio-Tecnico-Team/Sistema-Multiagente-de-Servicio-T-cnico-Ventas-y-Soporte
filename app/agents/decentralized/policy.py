@@ -44,7 +44,7 @@ def triaje_soporte(state):
         negation_text = re.sub(r"\bno (enciende|arranca|abre|funciona)\b", "falla", clause)
         if re.search(r"\b(no|nunca|tampoco|sin|descarto)\b", negation_text):
             continue
-        hardware |= bool(re.search(r"\b(no enciende|sale humo|olor a quemado|bateria (?:esta )?hinchada)\b", clause)
+        hardware |= bool(re.search(r"\b(no enciende|sale humo|olor a quemado|bateria (?:esta )?hinchada|se recalienta|sobrecalentamiento|temperatura alta)\b", clause)
                          or re.search(r"\b(reemplazar|cambiar|falla|averiado|roto)\b.*\b(ssd|ram|fuente|pantalla|bateria|componente)\b", clause))
         software |= bool(re.search(r"\b(aplicacion|programa|editor|navegador)\b.*\b(se cierra|falla|error|no abre)\b", clause)
                          or re.search(r"\b(instalar|actualizar|configurar|configuracion)\b.*\b(windows|linux|ubuntu|macos|controlador|controladores|driver|drivers|aplicacion|programa)\b", clause)

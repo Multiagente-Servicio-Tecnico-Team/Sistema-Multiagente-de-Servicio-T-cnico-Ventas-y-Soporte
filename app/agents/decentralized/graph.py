@@ -426,6 +426,7 @@ def preparar_turno(state: AgentState):
     )
     return {
         "turn_start_index": inicio,
+        "ticket_preparation_ready": False,
         "handoff_count": 0,
         "handoff_history": [],
         "handoff_records": [],
@@ -435,7 +436,7 @@ def preparar_turno(state: AgentState):
     }
 
 
-def build_graph(checkpointer=None, *, financial_repository=None):
+def build_graph(checkpointer=None, *, financial_repository=None, ticket_writes=False):
     """Construye la misma red; el consumidor puede aportar su checkpointer.
 
     Sin checkpointer admite invoke(state) y el historial gestionado por Conversation.
@@ -445,6 +446,11 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         raise ValueError("Preparación financiera requiere checkpointer explícito")
     builder = StateGraph(AgentState, context_schema=FinancialContext)
     for name, node in AGENT_NODES.items():
+        if name == "soporte" and financial_repository is not None:
+            def support_entry(state: AgentState, runtime: Runtime[FinancialContext]):
+                customer = (runtime.context or {}).get("authenticated_customer_id")
+                return soporte_node(state, authenticated_customer_id=customer) if customer is not None else soporte_node(state)
+            node = support_entry
         if name == "garantia" and financial_repository is not None:
             def warranty_entry(state: AgentState, runtime: Runtime[FinancialContext]):
                 return garantia_node(state, repository=financial_repository,
@@ -462,6 +468,56 @@ def build_graph(checkpointer=None, *, financial_repository=None):
                     authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"))
             node = financial_entry
         builder.add_node(name, node)
+
+    if ticket_writes and (financial_repository is None or checkpointer is None):
+        raise ValueError("Creación de tickets requiere repositorio y checkpointer")
+
+    def preparar_ticket(state: AgentState, runtime: Runtime[FinancialContext]):
+        from app.agents.decentralized.ticket_operations import validate_pending_ticket_operation
+        if state.get("ticket_correction_required"):
+            raise ValueError("La operación requiere reconciliación")
+        operation = validate_pending_ticket_operation(state.get("pending_ticket_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        return {"pending_ticket_operation": operation, "ticket_preparation_ready": False,
+                "messages": [AIMessage(content="La solicitud está preparada y todavía no se creó un ticket. Responde continuar para registrar esta misma solicitud y derivarla al especialista.")]}
+
+    def ejecutar_ticket(state: AgentState, config, runtime: Runtime[FinancialContext]):
+        from app.agents.decentralized.ticket_operations import validate_pending_ticket_operation
+        from app.database.decentralized_repository import _id
+        operation = validate_pending_ticket_operation(state.get("pending_ticket_operation"),
+            authenticated_customer_id=(runtime.context or {}).get("authenticated_customer_id"),
+            request_revision=state.get("request_revision"))
+        if state.get("ticket_correction_required") or state.get("ticket_id") is not None:
+            raise ValueError("Operación de ticket incompatible")
+        # Check the completed preparation checkpoint, not the current task's
+        # private namespace. API invokes with durability='sync'. Fail closed.
+        saved = checkpointer.get_tuple({"configurable": {
+            "thread_id": config["configurable"]["thread_id"], "checkpoint_ns": ""}})
+        if saved is None or saved.checkpoint.get("channel_values", {}).get("pending_ticket_operation") != operation:
+            raise RuntimeError("Operación pendiente no confirmada en checkpoint")
+        row = financial_repository.create_ticket(**operation["payload"])
+        if any(row.get(key) != value for key, value in operation["payload"].items()):
+            raise RuntimeError("Respuesta de ticket incompatible")
+        ticket_id = _id(row.get("id"))
+        from app.agents.decentralized.policy import triaje_soporte
+        kind = operation["payload"]["request_type"]
+        destination = {"SALE": "ventas", "PC_BUILD": "ventas", "SUPPORT": "software",
+                       "WARRANTY_CLAIM": "garantia", "REPAIR": "tecnico"}[kind]
+        if kind == "REPAIR" and triaje_soporte({"messages": [HumanMessage(content=operation["payload"]["failure_description"])]}) == "software":
+            destination = "software"
+        transfer = handoff("soporte", "transferir_a_" + destination,
+                           motivo="Continuar solicitud con ticket persistido y cliente autenticado")
+        transfer["messages"].insert(0, AIMessage(content="Tu solicitud quedó registrada con el código " + row["code"] + "."))
+        return {**transfer, "ticket_id": ticket_id, "ticket_code": row["code"],
+                "ticket_status": row["status"], "request_type": kind,
+                "pending_ticket_operation": None, "ticket_preparation_ready": False}
+
+    if ticket_writes:
+        builder.add_node("preparar_ticket", preparar_ticket)
+        builder.add_node("ejecutar_ticket", ejecutar_ticket)
+        builder.add_edge("preparar_ticket", "ejecutar_ticket")
+        builder.add_edge("ejecutar_ticket", "soporte_tools")
 
     def preparar_garantia(state: AgentState, runtime: Runtime[FinancialContext]):
         operation = validate_pending_warranty_operation(state.get("pending_warranty_operation"),
@@ -562,6 +618,10 @@ def build_graph(checkpointer=None, *, financial_repository=None):
         ("logistica", logistica_tools),
         ("garantia", garantia_tools),
     ):
+        if name == "soporte" and financial_repository is not None:
+            from app.agents.decentralized.tools.soporte_tools import authenticated_ticket_tool
+            tools = [authenticated_ticket_tool(financial_repository)
+                     if item.name == "consultar_estado_ticket" else item for item in tools]
         builder.add_node(f"{name}_tools", ToolNode(tools, handle_tool_errors=True))
 
     builder.add_node("guardar_inventario", guardar_inventario)
@@ -580,6 +640,14 @@ def build_graph(checkpointer=None, *, financial_repository=None):
     builder.add_conditional_edges("preparar_turno", route_entry,
                                   {name: name for name in AGENT_NODES})
     for agente in AGENT_NODES:
+        if agente == "soporte" and ticket_writes:
+            def support_route(state):
+                if tools_condition(state) == "tools":
+                    return "tools"
+                return "prepare" if state.get("ticket_preparation_ready") and not state.get("ticket_correction_required") else "__end__"
+            builder.add_conditional_edges(agente, support_route,
+                {"tools": "soporte_tools", "prepare": "preparar_ticket", "__end__": END})
+            continue
         if agente == "garantia":
             builder.add_conditional_edges(agente, warranty_route,
                 {"tools": "garantia_tools", "prepare": "preparar_garantia", "__end__": END})
@@ -623,8 +691,10 @@ def build_graph(checkpointer=None, *, financial_repository=None):
 
     # Static interrupt forces a saved checkpoint before the execution superstep.
     # Resume requires a trusted caller using invoke(None, context=...) explicitly.
-    return builder.compile(checkpointer=checkpointer,
-        interrupt_before=["ejecutar_pago", "ejecutar_logistica", "ejecutar_garantia"] if financial_repository is not None else None)
+    interrupts = ["ejecutar_pago", "ejecutar_logistica", "ejecutar_garantia"] if financial_repository is not None else []
+    if ticket_writes:
+        interrupts.append("ejecutar_ticket")
+    return builder.compile(checkpointer=checkpointer, interrupt_before=interrupts or None)
 
 
 # Compatible con scripts y Conversation que invocan sin thread_id.

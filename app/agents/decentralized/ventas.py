@@ -1,5 +1,6 @@
 
 import json
+import re
 from decimal import Decimal, InvalidOperation
 
 from dotenv import load_dotenv
@@ -338,6 +339,27 @@ def ventas_node(state: AgentState):
     """
 
     user = ultimo_usuario(state)
+    # An explicit quantity correction must invalidate earlier stock/proposals.
+    # Pending commercial operations still require reconciliation first.
+    if state.get("request_type") == "SALE" and state.get("ticket_id") and state.get("intake"):
+        from app.agents.decentralized.ticket_intake import NUMBERS, classify_request
+        correction = re.search(r"\bquiero\s+(\d+|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+en lugar", normalizar(user))
+        if correction and classify_request(user) != "AMBIGUOUS":
+            number = correction[1]
+            quantity = int(number) if number.isdigit() else NUMBERS[number]
+            if not 0 < quantity <= 2147483647:
+                return {"current_agent": "ventas", "messages": [AIMessage(content="Indica una cantidad entera positiva válida.")]}
+            if quantity != state["intake"].get("quantity"):
+                if state.get("quote_id") is not None or state.get("payment_id") is not None:
+                    return {"current_agent": "ventas", "messages": [AIMessage(content="La solicitud ya tiene una cotización o pago persistido. El cambio requiere revisión comercial; no se modificaron sus registros.")]}
+                from app.agents.decentralized.state import invalidate_request
+                from app.database.decentralized_repository import RetryConflict
+                try:
+                    patch = invalidate_request(state)
+                except RetryConflict:
+                    return {"current_agent": "ventas", "messages": [AIMessage(content="Hay una operación pendiente que debe reconciliarse antes de cambiar la cantidad. No se modificó la operación.")]}
+                return {**patch, "intake": {**state["intake"], "quantity": quantity},
+                        **handoff("ventas", "solicitar_inventario", consulta=user)}
     if es_marcador(user):
         return {"current_agent": "ventas", "messages": [AIMessage(content="Sustituye el texto entre corchetes por el nombre real del repuesto. No puedo consultar un marcador de ejemplo.")]}
     if es_compatibilidad(user):
@@ -345,13 +367,21 @@ def ventas_node(state: AgentState):
     if es_atencion(user):
         return handoff("ventas", "transferir_a_soporte", motivo="Orientación de atención presencial")
     reference = nombre_inventario(user)
+    intake = state.get("intake") or {}
+    intake_reference = nombre_inventario(str(intake.get("product_description", "")))
+    needs_intake_inventory = False
+    if state.get("request_type") == "SALE" and state.get("ticket_id") and intake_reference:
+        from app.agents.decentralized.policy import inventario_vigente
+        quantity = intake.get("quantity")
+        if type(quantity) is int and quantity > 0:
+            needs_intake_inventory = not inventario_vigente(state, [{"name": intake_reference, "quantity": quantity}])
     previous_names = [p.get("name", "") for p in state.get("required_parts", [])]
     previous_names.extend(r.get("requested_name", "") for r in state.get("inventory_results", []))
     corrected_reference = reference is not None and not any(
         normalizar(reference).replace(" ", "") == normalizar(name).replace(" ", "")
         for name in previous_names
     )
-    if (es_inventario(user) or corrected_reference) and not any(
+    if (es_inventario(user) or corrected_reference or needs_intake_inventory) and not any(
         isinstance(m, ToolMessage) and m.name == "consultar_inventario"
         for m in state["messages"][state.get("turn_start_index", 0):]
     ):

@@ -186,17 +186,26 @@ def almacen_node(state: AgentState):
     if state.get("inventory_query"):
         user = ultimo_usuario(state)
         name = nombre_inventario(user)
+        intake = state.get("intake") or {}
+        requested = nombre_inventario(str(intake.get("product_description", "")))
+        if not name and state.get("request_type") == "SALE":
+            name = requested
+        quantity = 1
+        if state.get("request_type") == "SALE" and name and name == requested:
+            quantity = intake.get("quantity", 1)
+            if type(quantity) is not int or quantity <= 0:
+                return {"current_agent": "almacen", "messages": [AIMessage(content="Indica una cantidad entera positiva antes de consultar inventario.")]}
         if not name:
             return {"current_agent": "almacen", "messages": [AIMessage(content=(
                 "Por ahora puedo consultar un repuesto identificado, pero no listar todas las opciones del catálogo. "
                 "Indica su referencia real (capacidad e interfaz, si es un SSD), sin corchetes. "
                 "No seleccionaré una variante por ti."
             ))]}
-        prepared = preparar_inventario(state, [{"name": name, "quantity": 1}])
+        prepared = preparar_inventario(state, [{"name": name, "quantity": quantity}])
         if not prepared["inventory_pending"]:
             return salida_abastecimiento({**state, **prepared, "inventory_query": None})
         else:
-            update = handoff("almacen", "consultar_inventario", nombre_repuesto=name, cantidad=1)
+            update = handoff("almacen", "consultar_inventario", nombre_repuesto=name, cantidad=quantity)
         update.update(prepared, inventory_query=None, quote_scope="repuestos")
         return update
     required = state.get("required_parts", [])

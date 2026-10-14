@@ -4,6 +4,7 @@ from app.agents.decentralized.policy import handoff, ultimo_usuario
 from app.agents.decentralized.warranty_operations import prepare_warranty_claim
 from app.agents.decentralized.tools.garantia_tools import garantia_tools
 from app.database.decentralized_repository import RetryConflict, _id
+import re
 
 
 def garantia_node(state, *, repository=None, authenticated_customer_id=None):
@@ -19,6 +20,15 @@ def garantia_node(state, *, repository=None, authenticated_customer_id=None):
         code = (state.get("intake") or {}).get("warranty_code") or state.get("warranty_code")
         # Explicit labelled user input, never fabricate or search by DNI.
         text = ultimo_usuario({**state, "messages": state.get("messages", [])})
+        reported = re.findall(r"\bWAR-[A-Za-z0-9-]+\b", text, flags=re.I)
+        if len(set(reported)) > 1:
+            return response("Indica un único código de garantía para esta consulta.")
+        if reported:
+            if len(reported[0]) > 50:
+                return response("El código de garantía supera el límite admitido; verifícalo.")
+            if code and code != reported[0] and (state.get("pending_warranty_operation") or state.get("warranty_claim_id")):
+                raise RetryConflict("Cambio de póliza con reclamo existente")
+            code = reported[0]
         if not code and text.strip().startswith("Código:"):
             code = text.strip().partition(":")[2].strip()
         if not code:

@@ -69,6 +69,7 @@ describe("asistente conectado", () => {
     renderChat(api);
 
     expect(screen.getByText(/Hola, Ana/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Patrón de agentes"), "hierarchical");
     await write(user, "Mi laptop no detecta el disco");
     expect(api.sendMessage).toHaveBeenCalledWith({ conversationId: null, pattern: "hierarchical", message: "Mi laptop no detecta el disco" });
     expect(await screen.findByText("Preparé el presupuesto.")).toBeInTheDocument();
@@ -91,7 +92,8 @@ describe("asistente conectado", () => {
 
     const selector = screen.getByLabelText("Patrón de agentes");
     await user.selectOptions(selector, "decentralized");
-    expect(screen.getByRole("status")).toHaveTextContent("no guarda tickets ni presupuestos");
+    expect(screen.getByRole("status")).toHaveTextContent("registra tickets autenticados");
+    expect(screen.getByRole("status")).toHaveTextContent("cotizaciones y pagos requieren validación comercial");
     await write(user, "Mi laptop no enciende desde ayer");
     expect(api.sendMessage).toHaveBeenCalledWith({
       conversationId: null,

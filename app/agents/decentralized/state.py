@@ -39,6 +39,9 @@ WarrantyClaimStatus = Literal["IN_REVIEW", "APPROVED_REPAIR", "APPROVED_REPLACEM
 
 
 class IntakeData(TypedDict, total=False):
+    warranty_code: str
+    product_description: str
+    quantity: int
     title: str
     failure_description: str
     equipment: str
@@ -230,6 +233,7 @@ class PendingWarrantyOperation(TypedDict):
 
 
 class AgentState(TypedDict, total=False):
+    ticket_preparation_ready: bool
     # Historial compartido entre agentes
     messages: Annotated[list[AnyMessage], add_messages]
 
@@ -272,6 +276,7 @@ class AgentState(TypedDict, total=False):
     ticket_code: str | None
     ticket_status: TicketStatus | None
     pending_ticket_operation: PendingTicketOperation | None
+    ticket_correction_required: bool
     pending_payment_operation: PendingPaymentOperation | None
     pending_warranty_operation: PendingWarrantyOperation | None
     warranty_preparation_ready: bool
@@ -340,6 +345,8 @@ def invalidate_request(state: AgentState, *, new_request: bool = False) -> Agent
         raise ValueError("Versión de solicitud inválida")
     update: AgentState = {
         "request_revision": revision + 1,
+        "ticket_correction_required": False,
+        "ticket_preparation_ready": False,
         "inventory_revision": None, "proposal": None, "proposal_decision": None,
         "logistics_preparation_ready": False, "warranty_preparation_ready": False,
         "quote": {}, "quote_scope": "", "inventory_query": None,

@@ -1,4 +1,23 @@
 from langchain_core.tools import tool
+from langgraph.prebuilt import ToolRuntime
+
+
+def authenticated_ticket_tool(repository):
+    """Bind a server repository; identity is injected, never a model argument."""
+    @tool("consultar_estado_ticket")
+    def lookup(numero_ticket: int, runtime: ToolRuntime[dict]) -> dict:
+        """Consulta un ticket existente autorizado por la sesión autenticada."""
+        customer = (runtime.context or {}).get("authenticated_customer_id")
+        if type(customer) is not int or customer <= 0:
+            return {"verified": False, "detail": "Se requiere una sesión autenticada."}
+        try:
+            row = repository.get_ticket(customer_id=customer, ticket_id=numero_ticket)
+            return {"verified": True, "ticket_id": row["id"], "ticket_code": row["code"], "status": row["status"]}
+        except LookupError:
+            return {"verified": False, "detail": "No se encontró un ticket autorizado."}
+        except Exception:
+            return {"verified": False, "detail": "No fue posible verificar el ticket en el almacenamiento."}
+    return lookup
 
 
 @tool

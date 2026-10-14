@@ -19,7 +19,7 @@ const PATTERNS = [
 const PATTERN_DESCRIPTIONS = {
   hierarchical: "Jerarquía de atención y ventas; guarda tickets y presupuestos en PostgreSQL.",
   orchestrator: "Supervisor de agentes; guarda tickets y presupuestos en PostgreSQL.",
-  decentralized: "Modo experimental: usa herramientas simuladas y no guarda tickets ni presupuestos.",
+  decentralized: "Red descentralizada de nueve agentes; registra tickets autenticados. Las cotizaciones y pagos requieren validación comercial.",
 };
 
 function QuoteCard({ quote, busy, onAction }) {
@@ -74,7 +74,7 @@ export default function LiveChat({ api = defaultChatApi }) {
     text: `Hola${firstName ? `, ${firstName}` : ""}. Cuéntame qué equipo tienes y qué falla presenta.`,
   }]);
   const [conversationId, setConversationId] = useState(null);
-  const [pattern, setPattern] = useState("hierarchical");
+  const [pattern, setPattern] = useState("decentralized");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);

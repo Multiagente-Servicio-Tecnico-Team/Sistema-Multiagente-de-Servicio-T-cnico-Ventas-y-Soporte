@@ -99,8 +99,8 @@ function CreatedCard({ id }) {
     <div className="created">
       <span className="icon-tile icon-tile--sm"><Ticket size={18} aria-hidden="true" /></span>
       <div>
-        <strong>Ticket #{id} registrado</strong>
-        <p>Estado: Recibido · En triage. Presupuesto pendiente de validación técnica.</p>
+        <strong>Consulta simulada #{id}</strong>
+        <p>Registro local de demostración; no es un ticket PostgreSQL ni un diagnóstico confirmado.</p>
       </div>
       <Link to="/portal/tickets" className="btn btn--soft btn--sm">Ver en Mis Tickets</Link>
     </div>
@@ -157,6 +157,10 @@ function Chat({ ticketId }) {
     if (!clean) return;
     addUser(clean);
     setDraft("");
+    if (/servicios.*ofrec|qu[eé].*servicios|horarios?|direcci[oó]n/i.test(clean)) {
+      reply(["Esta es una consulta informativa. El modo de demostración no está conectado al RAG oficial; no puedo confirmar el catálogo de servicios. No se creó ningún ticket."]);
+      return;
+    }
 
     if (step === "device") {
       setDevice(clean.slice(0, 80));
@@ -172,8 +176,8 @@ function Chat({ ticketId }) {
       setStep("done");
       reply(
         [
-          `Registré tu consulta como ticket #${id}.`,
-          "Un técnico validará el diagnóstico y te enviaré el presupuesto por aquí y en Mis Tickets. Ninguna reparación se inicia sin tu aprobación.",
+          `Simulé una consulta local #${id}. No se creó un ticket en PostgreSQL.`,
+          "Este modo no conecta técnicos ni envía presupuestos; los datos aparecen únicamente en la demostración local.",
         ],
         { created: id }
       );
@@ -295,5 +299,5 @@ export default function Assistant({ api = chatApi }) {
   const ticketId = params.get("ticket");
   // Con VITE_CHAT_URL, la consulta nueva va al patrón LangGraph con la sesión del inicio de sesión.
   if (!ticketId && api.mode === "api") return <LiveChat api={api} />;
-  return <Chat key={ticketId || "nueva"} ticketId={ticketId} />;
+  return <><p role="status">Modo de demostración local: no se ejecuta LangGraph ni se escriben tickets reales. Configura VITE_CHAT_URL para usar la API.</p><Chat key={ticketId || "nueva"} ticketId={ticketId} /></>;
 }
