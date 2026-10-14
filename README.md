@@ -1,26 +1,21 @@
-# Sistema-Multiagente-de-Servicio-Técnico-Ventas-y-Soporte
+# Sistema multiagente TechFix
 
-## Prueba local
+## Ejecutar FastAPI
 
-1. Instala dependencias con `pip install -r requirements.txt`.
-2. Completa `.env` con `GROQ_API_KEY`, `LANGSMITH_API_KEY` y `DATABASE_URL`.
-3. Ejecuta `streamlit run app/web.py` e ingresa el email de un usuario activo.
-4. Ejecuta `python -m unittest discover -s tests` para las pruebas locales.
+1. Configura `.env` con `GROQ_API_KEY`, `LANGSMITH_API_KEY` y `DATABASE_URL`.
+2. Inicia la API:
 
-El chat se conserva solo en memoria durante la sesión. El agente técnico recupera
-fallas, soluciones y componentes desde `app/agents/orquestador/knowledge/*.md`; agrega allí
-secciones Markdown para ampliar el catálogo. El catálogo usa nombres exactos de
-repuestos activos de `spare_parts`; la validación de compatibilidad, existencias
-y precios se hace en PostgreSQL durante cada consulta. Antes de guardar un ticket,
-el agente presenta el resumen y espera confirmación explícita. Los importes se
-expresan en soles peruanos (`PEN`, `S/`).
-
-## Estructura del orquestador
-
-```text
-app/agents/orquestador/
-	agentes/    Nodos de atención, soporte, almacén, ventas y persistencia
-	graph/      Estado compartido y supervisor LangGraph
-	knowledge/  Recuperador BM25 y catálogo Markdown
-	tools/      Herramientas conectadas a PostgreSQL
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.web:app --host 127.0.0.1 --port 8000
 ```
+
+La raíz `http://127.0.0.1:8000/` muestra el formulario para ingresar el correo y acceder al chat. La documentación interactiva está en `http://127.0.0.1:8000/docs`; `GET /health` comprueba disponibilidad.
+
+## Flujo HTTP
+
+1. `POST /api/v1/users/identify` con `{"email":"cliente@example.com"}` devuelve el `user_id` real de `users` y un `thread_id` asociado.
+2. `POST /api/v1/chat` con `user_id`, `thread_id` y `message` continúa el estado LangGraph de la sesión.
+
+La búsqueda de identidad lee únicamente `id`, `email` y `name`, y filtra usuarios activos. La API valida que el `thread_id` pertenezca al usuario autenticado en el proceso actual.
+
+El chat y las confirmaciones se conservan en memoria por sesión. El RAG se administra en `app/agents/orquestador/knowledge/`; precios y existencias siempre se consultan en PostgreSQL.
