@@ -16,6 +16,8 @@ def configure_tracing() -> None:
         "LANGSMITH_PROJECT",
         "Sistema-Multiagente-de-Servicio-Tecnico-Ventas-y-Soporte",
     )
+    # LangSmith failures must not mask an otherwise usable model response when tracing is optional.
+    os.environ.setdefault("LANGCHAIN_ENDPOINT", os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"))
 
 
 def create_chat_model():
@@ -30,4 +32,6 @@ def create_chat_model():
         model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
         temperature=0,
         api_key=api_key,
+        timeout=float(os.getenv("GROQ_TIMEOUT_SECONDS", "30")),
+        max_retries=int(os.getenv("GROQ_MAX_RETRIES", "1")),
     )

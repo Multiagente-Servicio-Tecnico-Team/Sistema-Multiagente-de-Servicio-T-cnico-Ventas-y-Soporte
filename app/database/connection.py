@@ -30,7 +30,7 @@ def get_engine():
     if engine is None:
         DATABASE_URL = os.getenv("DATABASE_URL")
         if not DATABASE_URL:
-            raise RuntimeError("DATABASE_URL no estÃ¡ configurada en el archivo .env")
+            raise RuntimeError("DATABASE_URL no está configurada en el archivo .env")
         engine = _create_database_engine(DATABASE_URL)
         SessionLocal.configure(bind=engine)
 

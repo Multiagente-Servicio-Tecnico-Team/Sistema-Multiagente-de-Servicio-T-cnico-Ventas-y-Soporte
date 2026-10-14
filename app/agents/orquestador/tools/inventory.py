@@ -1,11 +1,9 @@
 from langchain_core.tools import tool
 
-from app.database.repository import lookup_inventory
+from app.database.repository import search_inventory_options
 
 
 @tool
-def consultar_inventario(nombre_repuesto: str, cantidad: int = 1) -> dict[str, object]:
-    """Consulta existencias y precio actual de un repuesto en PostgreSQL."""
-    item = lookup_inventory(nombre_repuesto, cantidad)
-    item["unit_price"] = str(item["unit_price"])
-    return item
+def consultar_inventario(consulta: str) -> list[dict]:
+    """Busca componentes activos por nombre, código, categoría o especificación en PostgreSQL."""
+    return search_inventory_options(consulta)
