@@ -126,7 +126,7 @@ VITE_CHAT_URL=http://localhost:8000
 npm --prefix landing test
 ```
 
-61 pruebas en 7 archivos: contrato de cuentas y chat, rutas de API same-origin en
+62 pruebas en 7 archivos: contrato de cuentas y chat, rutas de API same-origin en
 producción, errores HTTP/red, selector y
 bloqueo de patrón, propuestas y tickets, registro, acceso, recuperación,
 restablecimiento, roles, cierre de sesión y consulta nueva.
